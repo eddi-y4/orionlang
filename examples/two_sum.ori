@@ -27,8 +27,10 @@ fn main() -> int {
 
     int* answer = twoSum(nums, 4);
     int packed = answer[0] * 10 + answer[1];
-    print(packed); // prints 1, representing indices [0, 1]
-
+	
+	// prints 1, representing indices [0, 1]
+    print(packed);
+		
     free(answer);
     free(nums);
     return 0;

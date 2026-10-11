@@ -1,6 +1,8 @@
 #include "raylib.h"
+#include "orion/colors.h"
 #include "orion/language.h"
 #include "orion/lexer.h"
+#include "orion/listing.h"
 #include <inttypes.h>
 #include <math.h>
 #include <stdio.h>
@@ -16,6 +18,13 @@ typedef struct {
     char **lines;
     size_t count;
 } SourceFile;
+
+typedef struct {
+    int source_line;
+    uintptr_t statement_id;
+    char source_token[ORION_TRACE_NAME];
+    char text[256];
+} BytecodeInstruction;
 
 typedef struct FlowLayout {
     ASTNode *ast;
@@ -204,17 +213,165 @@ static void free_source(SourceFile *source) {
     memset(source, 0, sizeof(*source));
 }
 
+static BytecodeInstruction *parse_bytecode_instructions(SourceFile *listing, size_t *count_out) {
+    BytecodeInstruction *instructions = NULL;
+    size_t count = 0, capacity = 0;
+    int source_line = 0;
+    uintptr_t current_statement_id = 0;
+    char source_token[ORION_TRACE_NAME] = "";
+    for (size_t i = 0; i < listing->count; ++i) {
+        const char *line = listing->lines[i];
+        int marker_line;
+        char marker_token[ORION_TRACE_NAME];
+        void *statement = NULL;
+        if (sscanf(line, ";@ %d %31s %p", &marker_line, marker_token, &statement) == 3) {
+            source_line = marker_line;
+            snprintf(source_token, sizeof(source_token), "%s", marker_token);
+            current_statement_id = (uintptr_t)statement;
+            continue;
+        }
+        while (*line == ' ' || *line == '\t') ++line;
+        if (source_line <= 0 || !*line || *line == ';' ||
+            (line[0] == 'L' && line[1] >= '0' && line[1] <= '9' && strchr(line, ':')) ||
+            strncmp(line, "FUNC ", 5) == 0 || strncmp(line, "END_FUNC", 8) == 0 ||
+            strncmp(line, "STRUCT ", 7) == 0 || strncmp(line, "END_STRUCT", 10) == 0 ||
+            strncmp(line, "FIELD ", 6) == 0 || strncmp(line, "PARAM ", 6) == 0) continue;
+        if (count == capacity) {
+            size_t next = capacity ? capacity * 2 : 64;
+            BytecodeInstruction *grown = realloc(instructions, next * sizeof(*grown));
+            if (!grown) { free(instructions); return NULL; }
+            instructions = grown;
+            capacity = next;
+        }
+        instructions[count].source_line = source_line;
+        instructions[count].statement_id = current_statement_id;
+        snprintf(instructions[count].source_token, sizeof(instructions[count].source_token), "%s", source_token);
+        snprintf(instructions[count].text, sizeof(instructions[count].text), "%s", line);
+        ++count;
+    }
+    *count_out = count;
+    return instructions;
+}
+
+static size_t *build_bytecode_timeline(const OrionTrace *trace, const BytecodeInstruction *instructions,
+                                       size_t instruction_count, size_t **event_indexes_out) {
+    size_t *step_offsets = calloc(trace->count + 1, sizeof(*step_offsets));
+    size_t *event_indexes = NULL, event_count = 0, event_capacity = 0;
+    if (!step_offsets) return NULL;
+    for (size_t s = 0; s < trace->count; ++s) {
+        const OrionTraceStep *step = &trace->steps[s];
+        step_offsets[s] = event_count;
+        int found_exact = 0;
+        for (size_t i = 0; i < instruction_count; ++i)
+            if (instructions[i].statement_id == step->statement_id) found_exact = 1;
+        for (size_t i = 0; i < instruction_count; ++i) {
+            if (found_exact ? instructions[i].statement_id != step->statement_id :
+                (instructions[i].source_line != step->source_line || strcmp(instructions[i].source_token, step->instruction) != 0)) continue;
+            if (event_count == event_capacity) {
+                size_t next = event_capacity ? event_capacity * 2 : 128;
+                size_t *grown = realloc(event_indexes, next * sizeof(*grown));
+                if (!grown) { free(step_offsets); free(event_indexes); return NULL; }
+                event_indexes = grown;
+                event_capacity = next;
+            }
+            event_indexes[event_count++] = i;
+        }
+    }
+    step_offsets[trace->count] = event_count;
+    *event_indexes_out = event_indexes;
+    return step_offsets;
+}
+
+static void draw_bytecode_queue(Rectangle panel, const BytecodeInstruction *instructions,
+                               const size_t *step_offsets, const size_t *event_indexes,
+                               size_t trace_count, size_t cursor, size_t animated_event,
+                               int animation_direction, float animation_progress) {
+    float center_x = panel.x + panel.width * 0.5f;
+    DrawLineEx((Vector2){center_x, 148}, (Vector2){center_x, panel.y + panel.height - 14}, 1.0f, ORI_COLOR_FRAME_OUTLINE);
+    ui_draw_text("POPPED / EXECUTED", (int)panel.x + 16, 143, 14, ORI_COLOR_STEP_TEXT);
+    ui_draw_text("PUSHED / QUEUED", (int)center_x + 12, 143, 14, ORI_COLOR_INSTRUCTION_TEXT);
+
+    size_t executed = cursor;
+    size_t total = step_offsets ? step_offsets[trace_count] : 0;
+    int row_h = 30;
+    int visible = ((int)(panel.y + panel.height) - 185) / row_h;
+    if (visible < 1) visible = 1;
+    int half_visible = visible / 2;
+    size_t history_show = executed < (size_t)half_visible ? executed : (size_t)half_visible;
+    for (size_t row = 0; row < history_show; ++row) {
+        size_t i = executed - 1 - row;
+        if (animation_direction > 0 && animation_progress < 1.0f && i == animated_event) continue;
+        int y = 169 + (int)row * row_h;
+        Rectangle card = {panel.x + 12, (float)y, panel.width * 0.5f - 30, (float)row_h - 4};
+        DrawRectangleRounded(card, 0.12f, 5, ORI_COLOR_FRAME_INACTIVE);
+        ui_draw_fitted(TextFormat("#%zu  %s", i + 1, instructions[event_indexes[i]].text), (int)card.x + 7, y + 5, 14, card.width - 14, ORI_COLOR_MUTED_TEXT);
+    }
+    size_t pending_count = total - executed;
+    size_t pending_show = pending_count < (size_t)(visible - half_visible) ? pending_count : (size_t)(visible - half_visible);
+    for (size_t i = 0; i < pending_show; ++i) {
+        if (animation_direction < 0 && animation_progress < 1.0f && executed + i == animated_event) continue;
+        int y = 169 + (int)i * row_h;
+        Rectangle card = {center_x + 10, (float)y, panel.width * 0.5f - 30, (float)row_h - 4};
+        Color fill = i == 0 ? ORI_COLOR_CHANGED_FILL : ORI_COLOR_FRAME_INACTIVE;
+        Color ink = i == 0 ? ORI_COLOR_ACTIVE_TEXT : ORI_COLOR_TEXT;
+        DrawRectangleRounded(card, 0.12f, 5, fill);
+        ui_draw_fitted(TextFormat("#%zu  %s", executed + i + 1, instructions[event_indexes[executed + i]].text), (int)card.x + 7, y + 5, 14, card.width - 14, ink);
+    }
+    if (total && animation_direction && animation_progress < 1.0f && animated_event < total) {
+        float t = animation_progress * animation_progress * (3.0f - 2.0f * animation_progress);
+        float left_x = panel.x + 12.0f;
+        float right_x = center_x + 10.0f;
+        float card_w = panel.width * 0.5f - 30.0f;
+        float start_x = animation_direction > 0 ? right_x : left_x;
+        float end_x = animation_direction > 0 ? left_x : right_x;
+        Rectangle moving = {start_x + (end_x - start_x) * t, 169.0f, card_w, (float)row_h - 4};
+        DrawRectangleRounded(moving, 0.12f, 5, ORI_COLOR_CHANGED_FILL);
+        ui_draw_fitted(TextFormat("#%zu  %s", animated_event + 1, instructions[event_indexes[animated_event]].text), (int)moving.x + 7,
+                       (int)moving.y + 5, 14, moving.width - 14, ORI_COLOR_ACTIVE_TEXT);
+    }
+    if (!total) ui_draw_text("No traced instructions for this program.", (int)panel.x + 18, 180, 16, ORI_COLOR_MUTED_TEXT);
+}
+
 static void draw_button(Rectangle r, const char *label, int enabled) {
-    Color fill = enabled ? (Color){57, 76, 105, 255} : (Color){42, 48, 60, 255};
+    Color fill = enabled ? ORI_COLOR_BUTTON_ACTIVE : ORI_COLOR_BUTTON_DISABLED;
     DrawRectangleRounded(r, 0.18f, 8, fill);
-    DrawRectangleRoundedLines(r, 0.18f, 8, enabled ? (Color){105, 139, 188, 255} : (Color){65, 70, 80, 255});
+    DrawRectangleRoundedLines(r, 0.18f, 8, enabled ? ORI_COLOR_BUTTON_BORDER : ORI_COLOR_BUTTON_DISABLED_BORDER);
     Vector2 extent = ui_measure_text(label, 18, 0.25f);
-    ui_draw_text(label, (int)(r.x + (r.width - extent.x) / 2), (int)(r.y + 12), 18, enabled ? RAYWHITE : GRAY);
+    ui_draw_text(label, (int)(r.x + (r.width - extent.x) / 2), (int)(r.y + 12), 18, enabled ? ORI_COLOR_BRIGHT_TEXT : ORI_COLOR_MUTED_TEXT);
 }
 
 static void move_step(int *index, int delta, size_t count) {
     if (delta < 0 && *index > 0) --*index;
     if (delta > 0 && (size_t)(*index + 1) < count) ++*index;
+}
+
+static void navigate_step(int *trace_index, int delta, size_t trace_count, int bytecode_mode,
+                          size_t *bytecode_cursor, const size_t *step_offsets,
+                          size_t total_events, size_t *animated_event, int *animation_direction,
+                          float *animation_progress) {
+    if (!trace_count) return;
+    if (bytecode_mode && step_offsets) {
+        if (delta > 0 && *bytecode_cursor < total_events) {
+            ++*bytecode_cursor;
+            *animated_event = *bytecode_cursor - 1;
+            *animation_direction = 1;
+            *animation_progress = 0.0f;
+        } else if (delta < 0 && *bytecode_cursor > 0) {
+            --*bytecode_cursor;
+            *animated_event = *bytecode_cursor;
+            *animation_direction = -1;
+            *animation_progress = 0.0f;
+        }
+        if (*bytecode_cursor >= total_events) *trace_index = (int)trace_count - 1;
+        else {
+            for (size_t s = 0; s < trace_count; ++s) {
+                if (*bytecode_cursor < step_offsets[s + 1]) { *trace_index = (int)s; break; }
+            }
+        }
+        return;
+    }
+    move_step(trace_index, delta, trace_count);
+    *bytecode_cursor = step_offsets ? step_offsets[*trace_index] : 0;
 }
 
 static const char *flow_label(ASTNode *node, SourceFile *source) {
@@ -252,14 +409,14 @@ static FlowLayout *flow_layout_build(ASTNode *ast, SourceFile *source) {
     if (!n) { perror("calloc flow layout"); exit(1); }
     n->ast = ast;
     const char *label = flow_label(ast, source);
-    float font = 15.0f;
+    float font = 18.0f;
     float label_w = ui_measure_text(label, font, 0.2f).x;
     if (label_w > 300.0f) label_w *= 12.0f / font;
     n->w = fmaxf(126.0f, fminf(320.0f, label_w + 26.0f));
-    n->h = 40.0f;
+    n->h = 46.0f;
     if (ast->type == AST_IF_STMT || ast->type == AST_WHILE_STMT) {
         n->w = fmaxf(170.0f, fminf(340.0f, label_w * 1.75f + 30.0f));
-        n->h = 56.0f;
+        n->h = 64.0f;
         n->body = flow_layout_build(ast->right, source);
         if (ast->type == AST_IF_STMT) n->otherwise = flow_layout_build(ast->extra, source);
     }
@@ -350,7 +507,7 @@ static Vector2 layout_exit(FlowLayout *n) {
 static void draw_flow_path(const Vector2 *points, int count, int active) {
     if (count < 2) return;
     (void)active;
-    Color color = {108, 132, 163, 255};
+    Color color = ORI_COLOR_FLOW_EDGE;
     float thickness = 1.7f;
     for (int i = 1; i < count; ++i) {
         if (fabsf(points[i].x - points[i-1].x) > 0.1f || fabsf(points[i].y - points[i-1].y) > 0.1f)
@@ -385,8 +542,8 @@ static void draw_flow_layout_edges(FlowLayout *list, int path_line) {
                 (!n->ast->right && n->next && n->next->ast->opToken.line == path_line);
             int else_taken = line_in_subtree(n->ast->extra, path_line) ||
                 (!n->ast->extra && n->next && n->next->ast->opToken.line == path_line);
-            ui_draw_text("true", (int)yes.x + 5, (int)(split.y + 30), 12, (Color){153, 175, 207, 255});
-            ui_draw_text("false", (int)no.x + 5, (int)(split.y + 30), 12, (Color){153, 175, 207, 255});
+            ui_draw_text("true", (int)yes.x + 5, (int)(split.y + 30), 14, ORI_COLOR_BRANCH_LABEL);
+            ui_draw_text("false", (int)no.x + 5, (int)(split.y + 30), 14, ORI_COLOR_BRANCH_LABEL);
             float fork_y = split.y + 34.0f;
             route_down(split, yes, fork_y, then_taken);
             route_down(split, no, fork_y, else_taken);
@@ -414,7 +571,7 @@ static void draw_flow_layout_edges(FlowLayout *list, int path_line) {
             Vector2 body_entry = n->body ? layout_top(n->body) : (Vector2){n->body_x + 60, n->body_y + 23};
             int body_taken = line_in_subtree(n->ast->right, path_line);
             route_down(split, body_entry, split.y + 34.0f, body_taken);
-            ui_draw_text("repeat", (int)body_entry.x + 5, (int)(split.y + 30), 12, (Color){153, 175, 207, 255});
+            ui_draw_text("repeat", (int)body_entry.x + 5, (int)(split.y + 30), 14, ORI_COLOR_BRANCH_LABEL);
             draw_flow_layout_edges(n->body, path_line);
             if (n->body) {
                 Vector2 end = layout_exit(n->body);
@@ -448,15 +605,15 @@ static void draw_flow_layout_nodes(FlowLayout *list, SourceFile *source, int cur
         int active = n->ast->opToken.line == current_line;
         Rectangle box = {n->x, n->y, n->w, n->h};
         Vector2 center = {box.x + box.width/2, box.y + box.height/2};
-        Color fill = (Color){42, 53, 69, 255}, outline = (Color){103, 126, 157, 255};
-        if (type == AST_IF_STMT) fill = (Color){104, 82, 43, 255};
-        else if (type == AST_WHILE_STMT) fill = (Color){38, 83, 94, 255};
-        else if (type == AST_VAR_DECL) fill = (Color){47, 95, 66, 255};
-        else if (type == AST_ASSIGN) fill = (Color){47, 76, 119, 255};
-        else if (type == AST_RETURN) fill = (Color){112, 71, 49, 255};
-        else if (type == AST_FREE) fill = (Color){118, 53, 62, 255};
-        else if (type == AST_CALL) fill = (Color){91, 65, 119, 255};
-        if (active) fill = (Color){91, 111, 145, 255};
+        Color fill = ORI_COLOR_FLOW_DEFAULT, outline = ORI_COLOR_FLOW_OUTLINE;
+        if (type == AST_IF_STMT) fill = ORI_COLOR_FLOW_IF;
+        else if (type == AST_WHILE_STMT) fill = ORI_COLOR_FLOW_WHILE;
+        else if (type == AST_VAR_DECL) fill = ORI_COLOR_FLOW_DECL;
+        else if (type == AST_ASSIGN) fill = ORI_COLOR_FLOW_ASSIGN;
+        else if (type == AST_RETURN) fill = ORI_COLOR_FLOW_RETURN;
+        else if (type == AST_FREE) fill = ORI_COLOR_FLOW_FREE;
+        else if (type == AST_CALL) fill = ORI_COLOR_FLOW_CALL;
+        if (active) fill = ORI_COLOR_FLOW_ACTIVE;
         if (type == AST_IF_STMT) {
             Vector2 p1={center.x,box.y}, p2={box.x+box.width,center.y};
             Vector2 p3={center.x,box.y+box.height}, p4={box.x,center.y};
@@ -489,13 +646,13 @@ static void draw_flow_layout_nodes(FlowLayout *list, SourceFile *source, int cur
             DrawRectangleRoundedLines(box,type==AST_CALL?0.4f:0.12f,6,outline);
         }
         const char *label = flow_label(n->ast, source);
-        float font = 15.0f;
+        float font = 18.0f;
         float avail = box.width - ((type == AST_IF_STMT || type == AST_WHILE_STMT) ? box.width*0.46f : 22.0f);
         float measured = ui_measure_text(label,font,0.2f).x;
         if (measured > avail) font *= avail / measured;
         int label_x=(int)center.x-(int)(avail/2),label_y=(int)center.y-(int)(font/2);
-        if(active) ui_draw_fitted(label,label_x+1,label_y+1,font,avail,(Color){15,20,29,255});
-        Color label_color=active?(Color){255,232,161,255}:(Color){248,250,253,255};
+        if(active) ui_draw_fitted(label,label_x+1,label_y+1,font,avail,ORI_COLOR_ACTIVE_TEXT_SHADOW);
+        Color label_color=active?ORI_COLOR_ACTIVE_TEXT:ORI_COLOR_BRIGHT_TEXT;
         ui_draw_fitted(label,label_x,label_y,font,avail,label_color);
         draw_flow_layout_nodes(n->body,source,current_line);
         draw_flow_layout_nodes(n->otherwise,source,current_line);
@@ -822,7 +979,7 @@ static Vector2 memory_field_port(const OrionTraceObject *obj,Rectangle box,size_
 static void draw_memory_edges(MemoryNode *nodes,size_t count,size_t heap_count) {
     memory_route_segment_count=0;
     unsigned char handled[ORION_TRACE_MAX_FRAMES*ORION_TRACE_MAX_VARS*2+ORION_TRACE_MAX_OBJECTS]={0};
-    Color normal={128,187,218,240};
+    Color normal=ORI_COLOR_MEMORY_EDGE;
     for(size_t i=heap_count;i<count;++i) {
         if(handled[i] || !nodes[i].target) continue;
         size_t target_index=count;
@@ -846,8 +1003,8 @@ static void draw_memory_edges(MemoryNode *nodes,size_t count,size_t heap_count) 
             for(size_t g=0;g<group_count;++g) {
                 size_t j=group[g];
                 Vector2 start={nodes[j].box.x+nodes[j].box.width,nodes[j].box.y+nodes[j].box.height/2};
-                draw_memory_route_segment(start,(Vector2){target_x,start.y},nodes[j].stale?(Color){128,187,218,90}:normal);
-                DrawCircleV(start,4.0f,nodes[j].stale?(Color){128,187,218,90}:normal);
+                draw_memory_route_segment(start,(Vector2){target_x,start.y},nodes[j].stale?ORI_COLOR_MEMORY_EDGE_FADED:normal);
+                DrawCircleV(start,4.0f,nodes[j].stale?ORI_COLOR_MEMORY_EDGE_FADED:normal);
                 handled[j]=1;
             }
             draw_memory_route_segment((Vector2){target_x,min_y},(Vector2){target_x,max_y},normal);
@@ -859,7 +1016,7 @@ static void draw_memory_edges(MemoryNode *nodes,size_t count,size_t heap_count) 
         } else {
             for(size_t g=0;g<group_count;++g) {
                 size_t j=group[g];
-                Color color=nodes[j].stale?(Color){128,187,218,90}:normal;
+                Color color=nodes[j].stale?ORI_COLOR_MEMORY_EDGE_FADED:normal;
                 Vector2 port={0,nodes[j].box.y+nodes[j].box.height/2};
                 draw_memory_link(&nodes[j],&nodes[target_index],port,color,(float)(j-i)*8.0f);
                 handled[j]=1;
@@ -1174,15 +1331,15 @@ static void draw_memory_view(const OrionTrace *trace, size_t trace_index,
     for(size_t fi=0;fi<step->frame_count;++fi) {
         if(!step->frames[fi].var_count) continue;
         Rectangle bounds=frame_bounds[fi];
-        DrawRectangleRoundedLines(bounds,0.05f,6,(Color){70,91,112,200});
-        ui_draw_text(step->frames[fi].function,(int)bounds.x+8,(int)bounds.y+5,14,(Color){142,169,197,255});
+        DrawRectangleRoundedLines(bounds,0.05f,6,ORI_COLOR_FRAME_OUTLINE);
+        ui_draw_text(step->frames[fi].function,(int)bounds.x+8,(int)bounds.y+5,14,ORI_COLOR_FRAME_TITLE);
     }
 
     for (size_t i=0;i<count;++i) {
         MemoryNode *n=&nodes[i];
-        Color fill=n->stale?(Color){47,51,59,120}:(n->freed?(Color){65,42,48,255}:
-            (n->changed?(Color){100,74,43,255}:(n->read?(Color){38,75,98,255}:
-            (n->is_heap?(Color){41,55,66,255}:(Color){32,43,58,255}))));
+        Color fill=n->stale?ORI_COLOR_STALE_BOX:(n->freed?ORI_COLOR_FREED_BOX:
+            (n->changed?ORI_COLOR_CHANGED_FILL:(n->read?ORI_COLOR_READ_FILL:
+            (n->is_heap?ORI_COLOR_HEAP_BOX:ORI_COLOR_STACK_BOX))));
         Rectangle b=n->box;
         if(n->stale) {
             float shrink=0.88f;
@@ -1190,15 +1347,15 @@ static void draw_memory_view(const OrionTrace *trace, size_t trace_index,
             b.width*=shrink; b.height*=shrink;
         }
         DrawRectangleRounded(b,0.08f,6,fill);
-        DrawRectangleRoundedLines(b,0.08f,6,n->stale?(Color){116,125,139,125}:(n->changed?(Color){235,177,87,255}:(Color){84,126,144,255}));
+        DrawRectangleRoundedLines(b,0.08f,6,n->stale?ORI_COLOR_STALE_OUTLINE:(n->changed?ORI_COLOR_CHANGED_BORDER:ORI_COLOR_BOX_OUTLINE));
         if(n->is_heap && n->owner_history[0])
-            ui_draw_text(n->owner_history,(int)b.x+8,(int)b.y+4,15,n->stale?(Color){190,193,198,125}:RAYWHITE);
-        else ui_draw_fitted(n->name,(int)b.x+8,(int)b.y+4,15,b.width-16,n->stale?(Color){190,193,198,125}:RAYWHITE);
+            ui_draw_text(n->owner_history,(int)b.x+8,(int)b.y+4,15,n->stale?ORI_COLOR_STALE_TEXT:ORI_COLOR_BRIGHT_TEXT);
+        else ui_draw_fitted(n->name,(int)b.x+8,(int)b.y+4,15,b.width-16,n->stale?ORI_COLOR_STALE_TEXT:ORI_COLOR_BRIGHT_TEXT);
         if(n->is_heap) {
             ui_draw_fitted(TextFormat("%s  @%08" PRIx64,n->name,n->address),
-                (int)b.x+8,(int)b.y+22,12,b.width-16,(Color){165,183,202,255});
+                (int)b.x+8,(int)b.y+22,12,b.width-16,ORI_COLOR_ADDRESS);
         } else {
-            ui_draw_text(TextFormat("@%08" PRIx64,n->address),(int)b.x+8,(int)b.y+b.height-21,12,n->stale?(Color){165,183,202,120}:(Color){165,183,202,255});
+            ui_draw_text(TextFormat("@%08" PRIx64,n->address),(int)b.x+8,(int)b.y+b.height-21,12,n->stale?ORI_COLOR_STALE_TEXT:ORI_COLOR_ADDRESS);
         }
         if (n->is_heap) {
             OrionTraceObject *obj=n->object;
@@ -1208,29 +1365,29 @@ static void draw_memory_view(const OrionTrace *trace, size_t trace_index,
                     size_t col=f%MEMORY_ARRAY_COLUMNS,row=f/MEMORY_ARRAY_COLUMNS;
                     int cell_x=(int)b.x+8+(int)col*(int)MEMORY_ARRAY_STEP_X;
                     int cell_y=(int)b.y+51+(int)row*(int)MEMORY_ARRAY_STEP_Y;
-                    Color cell_fill=obj->fields[f].read?(Color){37,72,91,255}:
-                        (field_changed(previous,obj->address,&obj->fields[f])?(Color){92,68,40,255}:(Color){27,33,44,255});
+                    Color cell_fill=obj->fields[f].read?ORI_COLOR_ARRAY_READ:
+                        (field_changed(previous,obj->address,&obj->fields[f])?ORI_COLOR_CHANGED_FILL:ORI_COLOR_ARRAY_IDLE);
                     DrawRectangleRounded((Rectangle){(float)cell_x,(float)cell_y,MEMORY_ARRAY_CELL_W,MEMORY_ARRAY_CELL_H},0.08f,4,cell_fill);
-                    ui_draw_text(obj->fields[f].name,cell_x+4,cell_y+3,11,(Color){165,183,202,255});
+                    ui_draw_text(obj->fields[f].name,cell_x+4,cell_y+3,11,ORI_COLOR_ADDRESS);
                     const char *value=obj->fields[f].pointer_target?TextFormat("->%04" PRIx64,obj->fields[f].pointer_target&0xffff):obj->fields[f].value;
                     ui_draw_fitted(value,cell_x+3,cell_y+22,12,46,
-                        obj->fields[f].pointer_target?(Color){139,205,235,255}:RAYWHITE);
+                        obj->fields[f].pointer_target?ORI_COLOR_POINTER_TEXT:ORI_COLOR_BRIGHT_TEXT);
                 }
                 if(obj->has_more)
-                    ui_draw_text("...",(int)b.x+(int)b.width-22,(int)b.y+(int)b.height-18,14,(Color){165,183,202,255});
+                    ui_draw_text("...",(int)b.x+(int)b.width-22,(int)b.y+(int)b.height-18,14,ORI_COLOR_ADDRESS);
             } else for(size_t f=0;f<obj->field_count;++f) {
                 int fy=(int)b.y+44+(int)f*34;
                 Rectangle field_box={(float)b.x+8.0f,(float)fy-2.0f,b.width-16.0f,29.0f};
-                DrawRectangleRounded(field_box,0.08f,4,(Color){27,33,44,n->stale?100:255});
-                DrawRectangleRoundedLines(field_box,0.08f,4,(Color){72,91,111,n->stale?110:255});
+                DrawRectangleRounded(field_box,0.08f,4,n->stale?ORI_COLOR_FIELD_FILL_STALE:ORI_COLOR_FIELD_FILL);
+                DrawRectangleRoundedLines(field_box,0.08f,4,n->stale?ORI_COLOR_FIELD_BORDER_STALE:ORI_COLOR_FIELD_OUTLINE);
                 const char *value=obj->fields[f].pointer_target?TextFormat("-> %08" PRIx64,obj->fields[f].pointer_target):obj->fields[f].value;
-                Color field_color=obj->fields[f].pointer_target?(Color){139,205,235,255}:
-                    (obj->fields[f].read?(Color){132,199,231,255}:RAYWHITE);
+                Color field_color=obj->fields[f].pointer_target?ORI_COLOR_POINTER_TEXT:
+                    (obj->fields[f].read?ORI_COLOR_READ_BORDER:ORI_COLOR_BRIGHT_TEXT);
                 ui_draw_fitted(TextFormat("%s: %s",obj->fields[f].name,value),(int)field_box.x+6,fy+4,14,field_box.width-12,field_color);
             }
         } else {
             ui_draw_fitted(TextFormat("%s  %s",n->type,n->value),(int)b.x+8,(int)b.y+28,14,b.width-16,
-                n->stale?(Color){180,185,194,115}:(n->target?(Color){139,205,235,255}:RAYWHITE));
+                n->stale?ORI_COLOR_FAINT_TEXT:(n->target?ORI_COLOR_POINTER_TEXT:ORI_COLOR_BRIGHT_TEXT));
         }
     }
 }
@@ -1340,14 +1497,22 @@ int main(int argc, char **argv) {
     if (!contents) return 1;
     SourceFile source = split_lines(contents);
     TokenStream tokens = lex_source(contents);
-    Parser parser = {tokens.data, 0, tokens.count};
+    Parser parser = {.tokens = tokens.data, .current = 0, .token_count = tokens.count};
     ASTNode *program = parse_program(&parser);
+    char *bytecode_text = generate_bytecode_listing(program);
+    SourceFile bytecode = split_lines(bytecode_text ? bytecode_text : "; unable to generate instruction listing");
+    free(bytecode_text);
     OrionTrace trace = {0};
     int result = run_program_traced(program, &trace);
     fprintf(stderr, "Program finished with exit value %d; captured %zu execution steps.\n", result, trace.count);
+    size_t bytecode_instruction_count = 0;
+    BytecodeInstruction *bytecode_instructions = parse_bytecode_instructions(&bytecode, &bytecode_instruction_count);
+    size_t *bytecode_event_indexes = NULL;
+    size_t *bytecode_step_offsets = build_bytecode_timeline(&trace, bytecode_instructions,
+        bytecode_instruction_count, &bytecode_event_indexes);
 
     SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_VSYNC_HINT);
-    InitWindow(WINDOW_W, WINDOW_H, TextFormat("OrionLang | %s", argv[1]));
+    InitWindow(WINDOW_W, WINDOW_H, TextFormat("Orion Rigel | %s", argv[1]));
     SetWindowMinSize(900, 600);
     ui_font_path = "assets/NotoSans-VariableFont.ttf";
     (void)ui_font_for_size(16);
@@ -1359,6 +1524,10 @@ int main(int argc, char **argv) {
     SetTargetFPS(60);
 
     int trace_index = 0;
+    size_t bytecode_cursor = 0;
+    size_t bytecode_animated_event = SIZE_MAX;
+    int bytecode_animation_direction = 0;
+    float bytecode_animation_progress = 1.0f;
     int previous_trace = -1;
     int playback = 0;
     float steps_per_second = 5.0f;
@@ -1366,7 +1535,8 @@ int main(int argc, char **argv) {
     float next_repeat_timer = 0.0f;
     float back_repeat_timer = 0.0f;
     int source_top = 1;
-    int view_mode = 0; /* 0 source, 1 flow */
+    int bytecode_top = 1;
+    int view_mode = 0; /* 0 source, 1 bytecode, 2 flow */
     Vector2 flow_pan = {0};
     float flow_zoom = 1.0f;
     int memory_view = 0;
@@ -1390,13 +1560,17 @@ int main(int argc, char **argv) {
         int next_down = IsKeyDown(KEY_N) || IsKeyDown(KEY_RIGHT) || IsKeyDown(KEY_SPACE);
         int back_down = IsKeyDown(KEY_B) || IsKeyDown(KEY_LEFT);
         if (next_down && (IsKeyPressed(KEY_N) || IsKeyPressed(KEY_RIGHT) || IsKeyPressed(KEY_SPACE) || next_repeat_timer <= 0.0f)) {
-            move_step(&trace_index, 1, trace.count);
-            next_repeat_timer = (IsKeyPressed(KEY_N) || IsKeyPressed(KEY_RIGHT) || IsKeyPressed(KEY_SPACE)) ? 0.35f : 0.08f;
+            navigate_step(&trace_index, 1, trace.count, view_mode == 1, &bytecode_cursor,
+                          bytecode_step_offsets, bytecode_step_offsets ? bytecode_step_offsets[trace.count] : 0,
+                          &bytecode_animated_event, &bytecode_animation_direction, &bytecode_animation_progress);
+            next_repeat_timer = (IsKeyPressed(KEY_N) || IsKeyPressed(KEY_RIGHT) || IsKeyPressed(KEY_SPACE)) ? 0.35f : (view_mode == 1 ? 0.30f : 0.08f);
         } else if (next_down) next_repeat_timer -= frame_time;
         else next_repeat_timer = 0.0f;
         if (back_down && (IsKeyPressed(KEY_B) || IsKeyPressed(KEY_LEFT) || back_repeat_timer <= 0.0f)) {
-            move_step(&trace_index, -1, trace.count);
-            back_repeat_timer = (IsKeyPressed(KEY_B) || IsKeyPressed(KEY_LEFT)) ? 0.35f : 0.08f;
+            navigate_step(&trace_index, -1, trace.count, view_mode == 1, &bytecode_cursor,
+                          bytecode_step_offsets, bytecode_step_offsets ? bytecode_step_offsets[trace.count] : 0,
+                          &bytecode_animated_event, &bytecode_animation_direction, &bytecode_animation_progress);
+            back_repeat_timer = (IsKeyPressed(KEY_B) || IsKeyPressed(KEY_LEFT)) ? 0.35f : (view_mode == 1 ? 0.30f : 0.08f);
         } else if (back_down) back_repeat_timer -= frame_time;
         else back_repeat_timer = 0.0f;
         if (IsKeyPressed(KEY_P)) { playback = !playback; playback_accumulator = 0.0f; }
@@ -1405,14 +1579,19 @@ int main(int argc, char **argv) {
         if (playback) {
             playback_accumulator += frame_time;
             float step_period = 1.0f / steps_per_second;
-            while (playback_accumulator >= step_period && playback) {
+            while (playback_accumulator >= step_period && playback &&
+                   !(view_mode == 1 && bytecode_animation_direction && bytecode_animation_progress < 1.0f)) {
                 int old_index = trace_index;
-                move_step(&trace_index, 1, trace.count);
-                playback_accumulator -= step_period;
-                if (trace_index == old_index || (size_t)(trace_index + 1) >= trace.count) playback = 0;
+                size_t old_bytecode_cursor = bytecode_cursor;
+                navigate_step(&trace_index, 1, trace.count, view_mode == 1, &bytecode_cursor,
+                              bytecode_step_offsets, bytecode_step_offsets ? bytecode_step_offsets[trace.count] : 0,
+                              &bytecode_animated_event, &bytecode_animation_direction, &bytecode_animation_progress);
+                playback_accumulator = view_mode == 1 ? 0.0f : playback_accumulator - step_period;
+                if (view_mode == 1 ? bytecode_cursor == old_bytecode_cursor : trace_index == old_index || (size_t)(trace_index + 1) >= trace.count) playback = 0;
+                if (view_mode == 1) break;
             }
         }
-        if (IsKeyPressed(KEY_R)) trace_index = 0;
+        if (IsKeyPressed(KEY_R)) { trace_index = 0; bytecode_cursor = 0; bytecode_animation_direction = 0; bytecode_animation_progress = 1.0f; }
         int w = GetScreenWidth(), h = GetScreenHeight();
         float window_scale=fminf((float)w/(float)WINDOW_W,(float)h/(float)WINDOW_H);
         ui_window_scale=fmaxf(0.80f,fminf(1.15f,window_scale));
@@ -1424,15 +1603,17 @@ int main(int argc, char **argv) {
         Rectangle faster_button = {650, h - 66, 36, 42};
         Rectangle source_panel = {24, 94, (float)(w * 48 / 100) - 34, (float)h - 270};
         Rectangle stack_panel = {(float)(w * 48 / 100) + 16, 94, (float)(w - w * 48 / 100) - 40, (float)h - 270};
-        Rectangle source_tab = {source_panel.x + 12, 104, 82, 30};
-        Rectangle flow_tab = {source_panel.x + 100, 104, 76, 30};
-        Rectangle zoom_out = {source_panel.x + 190, 104, 34, 30};
-        Rectangle zoom_in = {source_panel.x + 228, 104, 34, 30};
+        Rectangle source_tab = {source_panel.x + 12, 104, 76, 30};
+        Rectangle bytecode_tab = {source_panel.x + 94, 104, 100, 30};
+        Rectangle flow_tab = {source_panel.x + 200, 104, 76, 30};
+        Rectangle zoom_out = {source_panel.x + 284, 104, 34, 30};
+        Rectangle zoom_in = {source_panel.x + 322, 104, 34, 30};
         Rectangle values_tab = {stack_panel.x + 12, 104, 94, 30};
         Rectangle memory_tab = {stack_panel.x + 112, 104, 100, 30};
         Rectangle mem_zoom_out = {stack_panel.x + 220, 104, 34, 30};
         Rectangle mem_zoom_in = {stack_panel.x + 258, 104, 34, 30};
-        if (IsKeyPressed(KEY_F)) view_mode = view_mode == 1 ? 0 : 1;
+        if (IsKeyPressed(KEY_F)) view_mode = view_mode == 2 ? 0 : 2;
+        if (IsKeyPressed(KEY_C)) view_mode = view_mode == 1 ? 0 : 1;
         if (IsKeyPressed(KEY_M)) memory_view = !memory_view;
         if (IsKeyPressed(KEY_EQUAL) || IsKeyPressed(KEY_KP_ADD)) {
             if(memory_view) memory_zoom=fminf(2.5f,memory_zoom*1.15f);
@@ -1445,19 +1626,26 @@ int main(int argc, char **argv) {
         if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
             Vector2 mouse = GetMousePosition();
             if (CheckCollisionPointRec(mouse, source_tab)) view_mode = 0;
-            if (CheckCollisionPointRec(mouse, flow_tab)) view_mode = 1;
+            if (CheckCollisionPointRec(mouse, bytecode_tab)) view_mode = 1;
+            if (CheckCollisionPointRec(mouse, flow_tab)) view_mode = 2;
             if (CheckCollisionPointRec(mouse, values_tab)) memory_view = 0;
             if (CheckCollisionPointRec(mouse, memory_tab)) memory_view = 1;
-            if (CheckCollisionPointRec(mouse, back)) move_step(&trace_index, -1, trace.count);
-            if (CheckCollisionPointRec(mouse, reset)) trace_index = 0;
-            if (CheckCollisionPointRec(mouse, next)) move_step(&trace_index, 1, trace.count);
+            if (CheckCollisionPointRec(mouse, back))
+                navigate_step(&trace_index, -1, trace.count, view_mode == 1, &bytecode_cursor,
+                              bytecode_step_offsets, bytecode_step_offsets ? bytecode_step_offsets[trace.count] : 0,
+                              &bytecode_animated_event, &bytecode_animation_direction, &bytecode_animation_progress);
+            if (CheckCollisionPointRec(mouse, reset)) { trace_index = 0; bytecode_cursor = 0; bytecode_animation_direction = 0; bytecode_animation_progress = 1.0f; }
+            if (CheckCollisionPointRec(mouse, next))
+                navigate_step(&trace_index, 1, trace.count, view_mode == 1, &bytecode_cursor,
+                              bytecode_step_offsets, bytecode_step_offsets ? bytecode_step_offsets[trace.count] : 0,
+                              &bytecode_animated_event, &bytecode_animation_direction, &bytecode_animation_progress);
             if (CheckCollisionPointRec(mouse, play_button)) { playback = !playback; playback_accumulator = 0.0f; }
             if (CheckCollisionPointRec(mouse, slower_button)) steps_per_second = fmaxf(0.5f, steps_per_second - 0.5f);
             if (CheckCollisionPointRec(mouse, faster_button)) steps_per_second = fminf(60.0f, steps_per_second + 0.5f);
-            if (view_mode == 1 && CheckCollisionPointRec(mouse, zoom_in)) flow_zoom = fminf(2.5f, flow_zoom * 1.15f);
-            if (view_mode == 1 && CheckCollisionPointRec(mouse, zoom_out)) flow_zoom = fmaxf(0.35f, flow_zoom / 1.15f);
-            panning = view_mode && CheckCollisionPointRec(mouse, source_panel) &&
-                      !CheckCollisionPointRec(mouse, source_tab) && !CheckCollisionPointRec(mouse, flow_tab) &&
+            if (view_mode == 2 && CheckCollisionPointRec(mouse, zoom_in)) flow_zoom = fminf(2.5f, flow_zoom * 1.15f);
+            if (view_mode == 2 && CheckCollisionPointRec(mouse, zoom_out)) flow_zoom = fmaxf(0.35f, flow_zoom / 1.15f);
+            panning = view_mode == 2 && CheckCollisionPointRec(mouse, source_panel) &&
+                      !CheckCollisionPointRec(mouse, source_tab) && !CheckCollisionPointRec(mouse, bytecode_tab) && !CheckCollisionPointRec(mouse, flow_tab) &&
                       !CheckCollisionPointRec(mouse, zoom_in) && !CheckCollisionPointRec(mouse, zoom_out);
             drag_origin = mouse;
             memory_panning = memory_view && CheckCollisionPointRec(mouse, stack_panel) &&
@@ -1466,6 +1654,12 @@ int main(int argc, char **argv) {
             memory_drag_origin = mouse;
             if(memory_view && CheckCollisionPointRec(mouse,mem_zoom_in)) memory_zoom=fminf(2.5f,memory_zoom*1.15f);
             if(memory_view && CheckCollisionPointRec(mouse,mem_zoom_out)) memory_zoom=fmaxf(0.35f,memory_zoom/1.15f);
+        }
+        if (view_mode != 1 && bytecode_step_offsets)
+            bytecode_cursor = bytecode_step_offsets[trace_index];
+        if (bytecode_animation_direction && bytecode_animation_progress < 1.0f) {
+            bytecode_animation_progress = fminf(1.0f, bytecode_animation_progress + frame_time * 4.0f);
+            if (bytecode_animation_progress >= 1.0f) bytecode_animation_direction = 0;
         }
         if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) && panning) {
             flow_following = 0;
@@ -1492,18 +1686,19 @@ int main(int argc, char **argv) {
             memory_zoom=fmaxf(0.35f,fminf(2.5f,memory_zoom*powf(1.12f,wheel)));
             memory_pan.x=mouse.x-(mouse.x-memory_pan.x)*(memory_zoom/old_zoom);
             memory_pan.y=mouse.y-(mouse.y-memory_pan.y)*(memory_zoom/old_zoom);
-        } else if (wheel != 0 && CheckCollisionPointRec(mouse, source_panel) && view_mode == 1) {
+        } else if (wheel != 0 && CheckCollisionPointRec(mouse, source_panel) && view_mode == 2) {
             float old_zoom = flow_zoom;
             flow_zoom = fmaxf(0.35f, fminf(2.5f, flow_zoom * powf(1.12f, wheel)));
             flow_pan.x = mouse.x - (mouse.x - flow_pan.x) * (flow_zoom / old_zoom);
             flow_pan.y = mouse.y - (mouse.y - flow_pan.y) * (flow_zoom / old_zoom);
         } else if (wheel != 0 && CheckCollisionPointRec(mouse, source_panel)) {
-            source_top -= (int)(wheel * 3.0f);
+            if (view_mode == 1) bytecode_top -= (int)(wheel * 3.0f);
+            else source_top -= (int)(wheel * 3.0f);
         } else if (wheel != 0 && CheckCollisionPointRec(mouse, stack_panel)) {
             memory_scroll -= wheel * 56.0f;
         }
-        if (IsKeyPressed(KEY_UP)) --source_top;
-        if (IsKeyPressed(KEY_DOWN)) ++source_top;
+        if (IsKeyPressed(KEY_UP)) { if (view_mode == 1) --bytecode_top; else --source_top; }
+        if (IsKeyPressed(KEY_DOWN)) { if (view_mode == 1) ++bytecode_top; else ++source_top; }
 
         OrionTraceStep *step = trace.count ? &trace.steps[trace_index] : NULL;
         int current_line = step ? step->source_line : 1;
@@ -1512,49 +1707,53 @@ int main(int argc, char **argv) {
         int bottom_code_y = h - 190;
         int visible_source_lines = (bottom_code_y - first_code_y) / SOURCE_LINE_HEIGHT;
         if (visible_source_lines < 1) visible_source_lines = 1;
-        int max_source_top = source.count > (size_t)visible_source_lines ? (int)source.count - visible_source_lines + 1 : 1;
-        if (trace_index != previous_trace) {
+        SourceFile *listing_view = view_mode == 1 ? &bytecode : &source;
+        int *listing_top = view_mode == 1 ? &bytecode_top : &source_top;
+        int max_source_top = listing_view->count > (size_t)visible_source_lines ? (int)listing_view->count - visible_source_lines + 1 : 1;
+        if (view_mode == 0 && trace_index != previous_trace) {
             if (current_line < source_top) source_top = current_line;
             if (current_line >= source_top + visible_source_lines) source_top = current_line - visible_source_lines + 1;
             previous_trace = trace_index;
         }
-        if (source_top < 1) source_top = 1;
-        if (source_top > max_source_top) source_top = max_source_top;
+        if (*listing_top < 1) *listing_top = 1;
+        if (*listing_top > max_source_top) *listing_top = max_source_top;
 
         BeginDrawing();
-        ClearBackground((Color){18, 22, 30, 255});
-        ui_draw_text("ORIONLANG EXECUTION STEPPER", 30, 20, 28, RAYWHITE);
-        ui_draw_fitted(argv[1], 30, 56, 17, (float)w - 60, (Color){165, 178, 198, 255});
-        DrawRectangleRounded(source_panel, 0.04f, 8, (Color){27, 33, 44, 255});
-        DrawRectangleRounded(stack_panel, 0.04f, 8, (Color){27, 33, 44, 255});
-        DrawRectangleRounded(source_tab, 0.15f, 6, view_mode == 0 ? (Color){57, 76, 105, 255} : (Color){38, 47, 61, 255});
-        DrawRectangleRounded(flow_tab, 0.15f, 6, view_mode == 1 ? (Color){57, 76, 105, 255} : (Color){38, 47, 61, 255});
-        DrawRectangleRounded(values_tab, 0.15f, 6, !memory_view ? (Color){57, 76, 105, 255} : (Color){38, 47, 61, 255});
-        DrawRectangleRounded(memory_tab, 0.15f, 6, memory_view ? (Color){57, 76, 105, 255} : (Color){38, 47, 61, 255});
-        DrawRectangleRounded(mem_zoom_out, 0.15f, 6, (Color){38, 47, 61, 255});
-        DrawRectangleRounded(mem_zoom_in, 0.15f, 6, (Color){38, 47, 61, 255});
-        DrawRectangleRounded(zoom_out, 0.15f, 6, (Color){38, 47, 61, 255});
-        DrawRectangleRounded(zoom_in, 0.15f, 6, (Color){38, 47, 61, 255});
-        ui_draw_text("Source", (int)source_tab.x + 12, 110, 14, RAYWHITE);
-        ui_draw_text("Flow [F]", (int)flow_tab.x + 7, 110, 14, RAYWHITE);
-        ui_draw_text("Values", (int)values_tab.x + 18, 110, 14, RAYWHITE);
-        ui_draw_text("Memory [M]", (int)memory_tab.x + 5, 110, 13, RAYWHITE);
-        ui_draw_text("-", (int)zoom_out.x + 12, 108, 20, RAYWHITE);
-        ui_draw_text("+", (int)zoom_in.x + 10, 108, 20, RAYWHITE);
-        if (view_mode == 1) ui_draw_text(TextFormat("%d%%", (int)(flow_zoom * 100)), (int)zoom_in.x + 42, 111, 13, (Color){165, 183, 202, 255});
-        ui_draw_text("-",(int)mem_zoom_out.x+12,108,20,RAYWHITE);
-        ui_draw_text("+",(int)mem_zoom_in.x+10,108,20,RAYWHITE);
-        if(memory_view) ui_draw_text(TextFormat("%d%%",(int)(memory_zoom*100)),(int)mem_zoom_in.x+42,111,13,(Color){165,183,202,255});
+        ClearBackground(ORI_COLOR_BACKGROUND);
+        ui_draw_text("ORION RIGEL", 30, 20, 28, ORI_COLOR_BRIGHT_TEXT);
+        ui_draw_fitted(argv[1], 30, 56, 17, (float)w - 60, ORI_COLOR_MUTED_TEXT);
+        DrawRectangleRounded(source_panel, 0.04f, 8, ORI_COLOR_PANEL);
+        DrawRectangleRounded(stack_panel, 0.04f, 8, ORI_COLOR_PANEL);
+        DrawRectangleRounded(source_tab, 0.15f, 6, view_mode == 0 ? ORI_COLOR_TAB_ACTIVE : ORI_COLOR_TAB_INACTIVE);
+        DrawRectangleRounded(bytecode_tab, 0.15f, 6, view_mode == 1 ? ORI_COLOR_TAB_ACTIVE : ORI_COLOR_TAB_INACTIVE);
+        DrawRectangleRounded(flow_tab, 0.15f, 6, view_mode == 2 ? ORI_COLOR_TAB_ACTIVE : ORI_COLOR_TAB_INACTIVE);
+        DrawRectangleRounded(values_tab, 0.15f, 6, !memory_view ? ORI_COLOR_TAB_ACTIVE : ORI_COLOR_TAB_INACTIVE);
+        DrawRectangleRounded(memory_tab, 0.15f, 6, memory_view ? ORI_COLOR_TAB_ACTIVE : ORI_COLOR_TAB_INACTIVE);
+        DrawRectangleRounded(mem_zoom_out, 0.15f, 6, ORI_COLOR_TAB_INACTIVE);
+        DrawRectangleRounded(mem_zoom_in, 0.15f, 6, ORI_COLOR_TAB_INACTIVE);
+        DrawRectangleRounded(zoom_out, 0.15f, 6, ORI_COLOR_TAB_INACTIVE);
+        DrawRectangleRounded(zoom_in, 0.15f, 6, ORI_COLOR_TAB_INACTIVE);
+        ui_draw_text("Source", (int)source_tab.x + 12, 110, 14, ORI_COLOR_BRIGHT_TEXT);
+        ui_draw_text("Bytecode", (int)bytecode_tab.x + 10, 110, 14, ORI_COLOR_BRIGHT_TEXT);
+        ui_draw_text("Flow [F]", (int)flow_tab.x + 7, 110, 14, ORI_COLOR_BRIGHT_TEXT);
+        ui_draw_text("Values", (int)values_tab.x + 18, 110, 14, ORI_COLOR_BRIGHT_TEXT);
+        ui_draw_text("Memory [M]", (int)memory_tab.x + 5, 110, 13, ORI_COLOR_BRIGHT_TEXT);
+        ui_draw_text("-", (int)zoom_out.x + 12, 108, 20, ORI_COLOR_BRIGHT_TEXT);
+        ui_draw_text("+", (int)zoom_in.x + 10, 108, 20, ORI_COLOR_BRIGHT_TEXT);
+        if (view_mode == 2) ui_draw_text(TextFormat("%d%%", (int)(flow_zoom * 100)), (int)zoom_in.x + 42, 111, 13, ORI_COLOR_ADDRESS);
+        ui_draw_text("-",(int)mem_zoom_out.x+12,108,20,ORI_COLOR_BRIGHT_TEXT);
+        ui_draw_text("+",(int)mem_zoom_in.x+10,108,20,ORI_COLOR_BRIGHT_TEXT);
+        if(memory_view) ui_draw_text(TextFormat("%d%%",(int)(memory_zoom*100)),(int)mem_zoom_in.x+42,111,13,ORI_COLOR_ADDRESS);
 
         BeginScissorMode((int)source_panel.x + 8, first_code_y - 4, (int)source_panel.width - 16, bottom_code_y - first_code_y + 8);
-        if (view_mode == 1) {
+        if (view_mode == 2) {
             const char *active_function = step && step->frame_count ? step->frames[step->frame_count - 1].function : "main";
             ASTNode *function = NULL;
             for (ASTNode *fn = program->extra; fn; fn = fn->next)
                 if (strcmp(fn->opToken.lexeme, active_function) == 0) { function = fn; break; }
             char title[ORION_TRACE_NAME + 32];
             snprintf(title, sizeof(title), "Execution flow: %s", active_function);
-            ui_draw_fitted(title, (int)source_panel.x + 16, 137, 18, source_panel.width - 32, (Color){205, 223, 207, 255});
+            ui_draw_fitted(title, (int)source_panel.x + 16, 137, 18, source_panel.width - 32, ORI_COLOR_MAIN_TEXT);
             ui_font_scale = flow_zoom;
             ASTNode *body = function ? function->left : program->left;
             int layout_changed = body != cached_flow_body;
@@ -1609,7 +1808,7 @@ int main(int argc, char **argv) {
             Vector2 flow_world_mouse = {(flow_mouse.x - flow_pan.x) / flow_zoom,
                                         (flow_mouse.y - flow_pan.y) / flow_zoom};
             if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && CheckCollisionPointRec(flow_mouse, source_panel) &&
-                !CheckCollisionPointRec(flow_mouse, source_tab) && !CheckCollisionPointRec(flow_mouse, flow_tab) &&
+                !CheckCollisionPointRec(flow_mouse, source_tab) && !CheckCollisionPointRec(flow_mouse, bytecode_tab) && !CheckCollisionPointRec(flow_mouse, flow_tab) &&
                 !CheckCollisionPointRec(flow_mouse, zoom_in) && !CheckCollisionPointRec(flow_mouse, zoom_out)) {
                 flow_drag_node = flow_pick_node(cached_flow_layout, flow_world_mouse);
                 if (flow_drag_node) { panning = 0; flow_following = 0; }
@@ -1636,10 +1835,10 @@ int main(int argc, char **argv) {
                 FlowLayout *entry = cached_flow_layout;
                 Rectangle start = {entry->x + entry->w/2 - 36, 174, 72, 30};
                 DrawEllipse((int)(start.x + start.width/2), (int)(start.y + start.height/2),
-                            start.width/2, start.height/2, (Color){43, 96, 75, 255});
+                            start.width/2, start.height/2, ORI_COLOR_START_FILL);
                 DrawEllipseLines((int)(start.x + start.width/2), (int)(start.y + start.height/2),
-                                 start.width/2, start.height/2, (Color){109, 203, 158, 255});
-                ui_draw_text("Start", (int)start.x + 16, (int)start.y + 7, 13, RAYWHITE);
+                                 start.width/2, start.height/2, ORI_COLOR_START_OUTLINE);
+                ui_draw_text("Start", (int)start.x + 16, (int)start.y + 7, 13, ORI_COLOR_BRIGHT_TEXT);
                 Vector2 start_path[] = {{entry->x + entry->w/2, start.y + start.height},
                                         {entry->x + entry->w/2, entry->y}};
                 draw_flow_layout_nodes(cached_flow_layout, &source, current_line);
@@ -1648,27 +1847,38 @@ int main(int argc, char **argv) {
             }
             EndMode2D();
             ui_font_scale = 1.0f;
+        } else if (view_mode == 1) {
+            draw_bytecode_queue(source_panel, bytecode_instructions, bytecode_step_offsets,
+                                bytecode_event_indexes, trace.count, bytecode_cursor,
+                                bytecode_animated_event, bytecode_animation_direction,
+                                bytecode_animation_progress);
         } else {
-        for (int row = 0; row < visible_source_lines; ++row) {
-            int line = source_top + row;
-            if ((size_t)line > source.count) break;
-            int y = first_code_y + row * SOURCE_LINE_HEIGHT;
-            if (line == current_line) DrawRectangle((int)source_panel.x + 12, y - 2, (int)source_panel.width - 24, SOURCE_LINE_HEIGHT, (Color){73, 91, 120, 190});
-            char numbered[16]; snprintf(numbered, sizeof(numbered), "%3d", line);
-            Color source_ink=line==current_line?(Color){255,224,145,255}:(Color){165,179,196,255};
-            Color code_ink=line==current_line?(Color){255,244,207,255}:(Color){240,242,246,255};
-            ui_draw_text(numbered, (int)source_panel.x + 18, y, SOURCE_TEXT_SIZE, source_ink);
-            ui_draw_fitted(source.lines[line - 1], (int)source_panel.x + 68, y, SOURCE_TEXT_SIZE, source_panel.width - 84, code_ink);
-        }
+            for (int row = 0; row < visible_source_lines; ++row) {
+                int line = *listing_top + row;
+                if ((size_t)line > listing_view->count) break;
+                int y = first_code_y + row * SOURCE_LINE_HEIGHT;
+                if (view_mode == 0 && line == current_line) DrawRectangle((int)source_panel.x + 12, y - 2, (int)source_panel.width - 24, SOURCE_LINE_HEIGHT, ORI_COLOR_LINE_CURRENT);
+                char numbered[16]; snprintf(numbered, sizeof(numbered), "%3d", line);
+                Color source_ink=line==current_line?ORI_COLOR_LINE_NUMBER_ACTIVE:ORI_COLOR_MUTED_TEXT;
+                Color code_ink=line==current_line?ORI_COLOR_LINE_TEXT_ACTIVE:ORI_COLOR_TEXT;
+                ui_draw_text(numbered, (int)source_panel.x + 18, y, SOURCE_TEXT_SIZE, source_ink);
+                ui_draw_fitted(listing_view->lines[line - 1], (int)source_panel.x + 68, y, SOURCE_TEXT_SIZE, source_panel.width - 84, code_ink);
+            }
         }
         EndScissorMode();
-        if (!source.count) ui_draw_text("(empty source file)", (int)source_panel.x + 44, first_code_y, 17, GRAY);
+        if (!listing_view->count) ui_draw_text(view_mode == 1 ? "(no bytecode listing)" : "(empty source file)", (int)source_panel.x + 44, first_code_y, 17, ORI_COLOR_MUTED_TEXT);
 
-        char step_label[96];
-        if (step) snprintf(step_label, sizeof(step_label), "STEP %d / %zu   |   LINE %d", trace_index + 1, trace.count, step->source_line);
+        char step_label[160];
+        if (view_mode == 1) {
+            size_t total_bytecode_events = bytecode_step_offsets ? bytecode_step_offsets[trace.count] : 0;
+            if (bytecode_cursor < total_bytecode_events)
+                snprintf(step_label, sizeof(step_label), "NEXT INSTRUCTION %zu / %zu   |   SOURCE STEP %d / %zu", bytecode_cursor + 1, total_bytecode_events, trace_index + 1, trace.count);
+            else snprintf(step_label, sizeof(step_label), "INSTRUCTION QUEUE COMPLETE   |   SOURCE STEP %d / %zu", trace_index + 1, trace.count);
+        }
+        else if (step) snprintf(step_label, sizeof(step_label), "STEP %d / %zu   |   LINE %d", trace_index + 1, trace.count, step->source_line);
         else snprintf(step_label, sizeof(step_label), "No executable statements were captured.");
-        ui_draw_text(step_label, 42, h - 157, 18, (Color){129, 165, 213, 255});
-        if (step) ui_draw_fitted(TextFormat("Statement: %s", step->instruction), 42, h - 130, 20, source_panel.width - 34, (Color){245, 203, 112, 255});
+        ui_draw_text(step_label, 42, h - 157, 18, ORI_COLOR_STEP_TEXT);
+        if (step) ui_draw_fitted(TextFormat("Statement: %s", step->instruction), 42, h - 130, 20, source_panel.width - 34, ORI_COLOR_INSTRUCTION_TEXT);
 
         BeginScissorMode((int)stack_panel.x + 4, 136, (int)stack_panel.width - 8, (int)stack_panel.height - 48);
         int stack_top = 140;
@@ -1718,9 +1928,9 @@ int main(int argc, char **argv) {
                 OrionTraceFrame *frame = &step->frames[i];
                 int rows = (int)((frame->var_count + 1) / 2);
                 int card_h = 45 + rows * 52;
-                DrawRectangleRounded((Rectangle){(float)left_w + 32, (float)stack_top - memory_scroll, stack_panel.width - 62, (float)card_h}, 0.06f, 8, i + 1 == step->frame_count ? (Color){51, 74, 92, 255} : (Color){38, 47, 61, 255});
-                DrawRectangleRoundedLines((Rectangle){(float)left_w + 32, (float)stack_top - memory_scroll, stack_panel.width - 62, (float)card_h}, 0.06f, 8, i + 1 == step->frame_count ? (Color){112, 174, 202, 255} : (Color){73, 88, 108, 255});
-                ui_draw_text(frame->function, left_w + 48, stack_top + 7 - (int)memory_scroll, 19, RAYWHITE);
+                DrawRectangleRounded((Rectangle){(float)left_w + 32, (float)stack_top - memory_scroll, stack_panel.width - 62, (float)card_h}, 0.06f, 8, i + 1 == step->frame_count ? ORI_COLOR_FRAME_ACTIVE : ORI_COLOR_FRAME_INACTIVE);
+                DrawRectangleRoundedLines((Rectangle){(float)left_w + 32, (float)stack_top - memory_scroll, stack_panel.width - 62, (float)card_h}, 0.06f, 8, i + 1 == step->frame_count ? ORI_COLOR_FRAME_ACTIVE_BORDER : ORI_COLOR_FRAME_INACTIVE_BORDER);
+                ui_draw_text(frame->function, left_w + 48, stack_top + 7 - (int)memory_scroll, 19, ORI_COLOR_BRIGHT_TEXT);
                 for (size_t v = 0; v < frame->var_count; ++v) {
                     int col = (int)(v % 2), row = (int)(v / 2);
                     int chip_x = left_w + 46 + col * 254;
@@ -1728,25 +1938,25 @@ int main(int argc, char **argv) {
                     Rectangle chip = {(float)chip_x, (float)chip_y - memory_scroll, 244, 44};
                     int changed = trace_index > 0 && variable_changed(&trace.steps[trace_index - 1], &frame->vars[v]);
                     int read = frame->vars[v].read;
-                    Color chip_fill = changed ? (Color){104, 75, 42, 255} : (read ? (Color){38, 75, 98, 255} : (Color){27, 33, 44, 255});
+                    Color chip_fill = changed ? ORI_COLOR_CHANGED_FILL : (read ? ORI_COLOR_READ_FILL : ORI_COLOR_PANEL);
                     DrawRectangleRounded(chip, 0.11f, 6, chip_fill);
-                    if (changed || read) DrawRectangleRoundedLines(chip, 0.11f, 6, changed ? (Color){235, 177, 87, 255} : (Color){96, 184, 224, 255});
-                    if (changed && read) DrawRectangleRec((Rectangle){chip.x, chip.y + 5, 4, chip.height - 10}, (Color){96, 184, 224, 255});
+                    if (changed || read) DrawRectangleRoundedLines(chip, 0.11f, 6, changed ? ORI_COLOR_CHANGED_BORDER : ORI_COLOR_READ_BORDER);
+                    if (changed && read) DrawRectangleRec((Rectangle){chip.x, chip.y + 5, 4, chip.height - 10}, ORI_COLOR_READ_CHANGED_STRIPE);
                     char address[32]; snprintf(address, sizeof(address), "@ 0x%08" PRIx64, frame->vars[v].address);
                     Vector2 address_size = ui_measure_text(address, 13, 0.25f);
                     int address_x = chip_x + 236 - (int)address_size.x;
                     char variable_label[ORION_TRACE_NAME * 2];
                     snprintf(variable_label, sizeof(variable_label), "%s: %s", frame->vars[v].name, frame->vars[v].type[0] ? frame->vars[v].type : "?");
-                    ui_draw_fitted(variable_label, chip_x + 8, chip_y + 3 - (int)memory_scroll, 17, address_x - chip_x - 14, (Color){205, 223, 207, 255});
-                    ui_draw_text(address, address_x, chip_y + 3 - (int)memory_scroll, 13, (Color){165, 183, 202, 255});
+                    ui_draw_fitted(variable_label, chip_x + 8, chip_y + 3 - (int)memory_scroll, 17, address_x - chip_x - 14, ORI_COLOR_MAIN_TEXT);
+                    ui_draw_text(address, address_x, chip_y + 3 - (int)memory_scroll, 13, ORI_COLOR_ADDRESS);
                     ui_draw_fitted(frame->vars[v].pointer_target ? TextFormat("-> %s", frame->vars[v].value) : frame->vars[v].value,
                                    chip_x + 8, chip_y + 23 - (int)memory_scroll, 16, 224,
-                                   frame->vars[v].pointer_target ? (Color){139, 205, 235, 255} : RAYWHITE);
+                                   frame->vars[v].pointer_target ? ORI_COLOR_POINTER_TEXT : ORI_COLOR_BRIGHT_TEXT);
                 }
                 stack_top += card_h + 10;
             }
             if (step->object_count) {
-                ui_draw_text("HEAP OBJECTS", left_w + 44, stack_top + 2 - (int)memory_scroll, 16, (Color){129, 165, 213, 255});
+                ui_draw_text("HEAP OBJECTS", left_w + 44, stack_top + 2 - (int)memory_scroll, 16, ORI_COLOR_STEP_TEXT);
                 stack_top += 26;
                 for (size_t o = 0; o < step->object_count; ++o) {
                     OrionTraceObject *object = &step->objects[o];
@@ -1758,15 +1968,15 @@ int main(int argc, char **argv) {
                     Rectangle object_box = {(float)left_w + 46, (float)stack_top - memory_scroll, stack_panel.width - 88, (float)card_h};
                     const OrionTraceObject *old_object = trace_index > 0 ? find_previous_object(&trace.steps[trace_index - 1], object->address) : NULL;
                     int allocation_changed = trace_index > 0 && (!old_object || old_object->freed != object->freed);
-                    DrawRectangleRounded(object_box, 0.06f, 8, allocation_changed ? (Color){100, 74, 43, 255} : (object->freed ? (Color){65, 42, 48, 255} : (Color){41, 55, 66, 255}));
-                    DrawRectangleRoundedLines(object_box, 0.06f, 8, allocation_changed ? (Color){235, 177, 87, 255} : (object->freed ? (Color){142, 86, 95, 255} : (Color){84, 126, 144, 255}));
+                    DrawRectangleRounded(object_box, 0.06f, 8, allocation_changed ? ORI_COLOR_CHANGED_FILL : (object->freed ? ORI_COLOR_FREED_BOX : ORI_COLOR_HEAP_BOX));
+                    DrawRectangleRoundedLines(object_box, 0.06f, 8, allocation_changed ? ORI_COLOR_CHANGED_BORDER : (object->freed ? ORI_COLOR_FREED_BORDER : ORI_COLOR_BOX_OUTLINE));
                     char object_label[ORION_TRACE_NAME + 16];
                     snprintf(object_label, sizeof(object_label), "%s%s", object->type, object->freed ? "  (freed)" : "");
                     char object_address[32]; snprintf(object_address, sizeof(object_address), "@ 0x%08" PRIx64, object->address);
                     Vector2 object_address_size = ui_measure_text(object_address, 13, 0.25f);
                     int object_address_x = left_w + (int)stack_panel.width - 48 - (int)object_address_size.x;
-                    ui_draw_fitted(object_label, left_w + 58, stack_top + 5 - (int)memory_scroll, 16, object_address_x - (left_w + 70), RAYWHITE);
-                    ui_draw_text(object_address, object_address_x, stack_top + 5 - (int)memory_scroll, 13, (Color){165, 183, 202, 255});
+                    ui_draw_fitted(object_label, left_w + 58, stack_top + 5 - (int)memory_scroll, 16, object_address_x - (left_w + 70), ORI_COLOR_BRIGHT_TEXT);
+                    ui_draw_text(object_address, object_address_x, stack_top + 5 - (int)memory_scroll, 13, ORI_COLOR_ADDRESS);
                     if (object->is_array) {
                         int cell_x = left_w + 58;
                         int cell_y = stack_top + 26;
@@ -1779,17 +1989,17 @@ int main(int argc, char **argv) {
                             int changed = !is_ellipsis && trace_index > 0 && field_changed(&trace.steps[trace_index - 1], object->address, &object->fields[f]);
                             Rectangle cell = {(float)x, (float)y - memory_scroll, 52, 52};
                             int read = !is_ellipsis && object->fields[f].read;
-                            Color cell_fill = changed ? (Color){104, 75, 42, 255} : (read ? (Color){38, 75, 98, 255} : (Color){27, 33, 44, 255});
+                            Color cell_fill = changed ? ORI_COLOR_CHANGED_FILL : (read ? ORI_COLOR_READ_FILL : ORI_COLOR_PANEL);
                             DrawRectangleRounded(cell, 0.08f, 5, cell_fill);
-                            if (changed || read) DrawRectangleRoundedLines(cell, 0.08f, 5, changed ? (Color){235, 177, 87, 255} : (Color){96, 184, 224, 255});
-                            if (changed && read) DrawRectangleRec((Rectangle){cell.x, cell.y + 5, 4, cell.height - 10}, (Color){96, 184, 224, 255});
+                            if (changed || read) DrawRectangleRoundedLines(cell, 0.08f, 5, changed ? ORI_COLOR_CHANGED_BORDER : ORI_COLOR_READ_BORDER);
+                            if (changed && read) DrawRectangleRec((Rectangle){cell.x, cell.y + 5, 4, cell.height - 10}, ORI_COLOR_READ_CHANGED_STRIPE);
                             if (is_ellipsis) {
-                                ui_draw_text("...", x + 14, y + 18 - (int)memory_scroll, 16, (Color){165, 183, 202, 255});
+                                ui_draw_text("...", x + 14, y + 18 - (int)memory_scroll, 16, ORI_COLOR_ADDRESS);
                             } else {
-                                ui_draw_text(object->fields[f].name, x + 4, y + 3 - (int)memory_scroll, 12, (Color){165, 183, 202, 255});
+                                ui_draw_text(object->fields[f].name, x + 4, y + 3 - (int)memory_scroll, 12, ORI_COLOR_ADDRESS);
                                 const char *cell_value = object->fields[f].pointer_target ? TextFormat("->%08" PRIx64, object->fields[f].pointer_target) : object->fields[f].value;
                                 ui_draw_fitted(cell_value, x + 3, y + 25 - (int)memory_scroll, 13, 46,
-                                               object->fields[f].pointer_target ? (Color){139, 205, 235, 255} : RAYWHITE);
+                                               object->fields[f].pointer_target ? ORI_COLOR_POINTER_TEXT : ORI_COLOR_BRIGHT_TEXT);
                             }
                         }
                     } else {
@@ -1798,10 +2008,10 @@ int main(int argc, char **argv) {
                             int changed = trace_index > 0 && field_changed(&trace.steps[trace_index - 1], object->address, &object->fields[f]);
                             Rectangle field_box = {(float)left_w + 58, (float)fy - memory_scroll, stack_panel.width - 112, 23};
                             int read = object->fields[f].read;
-                            Color field_fill = changed ? (Color){104, 75, 42, 255} : (read ? (Color){38, 75, 98, 255} : (Color){27, 33, 44, 255});
+                            Color field_fill = changed ? ORI_COLOR_CHANGED_FILL : (read ? ORI_COLOR_READ_FILL : ORI_COLOR_PANEL);
                             DrawRectangleRounded(field_box, 0.08f, 5, field_fill);
-                            if (changed || read) DrawRectangleRoundedLines(field_box, 0.08f, 5, changed ? (Color){235, 177, 87, 255} : (Color){96, 184, 224, 255});
-                            if (changed && read) DrawRectangleRec((Rectangle){field_box.x, field_box.y + 3, 4, field_box.height - 6}, (Color){96, 184, 224, 255});
+                            if (changed || read) DrawRectangleRoundedLines(field_box, 0.08f, 5, changed ? ORI_COLOR_CHANGED_BORDER : ORI_COLOR_READ_BORDER);
+                            if (changed && read) DrawRectangleRec((Rectangle){field_box.x, field_box.y + 3, 4, field_box.height - 6}, ORI_COLOR_READ_CHANGED_STRIPE);
                             const char *value = object->fields[f].pointer_target
                                 ? TextFormat("-> %s", object->fields[f].value)
                                 : object->fields[f].value;
@@ -1812,9 +2022,9 @@ int main(int argc, char **argv) {
                             char field_label[ORION_TRACE_NAME * 2];
                             snprintf(field_label, sizeof(field_label), "%s: %s", object->fields[f].name, object->fields[f].type[0] ? object->fields[f].type : "?");
                             ui_draw_fitted(field_label, left_w + 65, fy + 2 - (int)memory_scroll, 15,
-                                           value_x - (left_w + 76), (Color){205, 222, 199, 255});
+                                           value_x - (left_w + 76), ORI_COLOR_MAIN_TEXT);
                             ui_draw_fitted(value, value_x, fy + 2 - (int)memory_scroll, 15,
-                                           value_limit, object->fields[f].pointer_target ? (Color){139, 205, 235, 255} : RAYWHITE);
+                                           value_limit, object->fields[f].pointer_target ? ORI_COLOR_POINTER_TEXT : ORI_COLOR_BRIGHT_TEXT);
                         }
                     }
                     stack_top += card_h + 10;
@@ -1829,15 +2039,16 @@ int main(int argc, char **argv) {
             if (memory_scroll > max_memory_scroll) memory_scroll = max_memory_scroll;
         }
         EndScissorMode();
-        draw_button(back, "Back  [B]", trace_index > 0);
+        size_t total_bytecode_events = bytecode_step_offsets ? bytecode_step_offsets[trace.count] : 0;
+        draw_button(back, "Back  [B]", view_mode == 1 ? bytecode_cursor > 0 : trace_index > 0);
         draw_button(reset, "Reset  [R]", 1);
-        draw_button(next, "Next  [N]", (size_t)(trace_index + 1) < trace.count);
+        draw_button(next, "Next  [N]", view_mode == 1 ? bytecode_cursor < total_bytecode_events : (size_t)(trace_index + 1) < trace.count);
         draw_button(play_button, playback ? "Pause  [P]" : "Play  [P]", 1);
         draw_button(slower_button, "-", steps_per_second > 0.5f);
         draw_button(faster_button, "+", steps_per_second < 60.0f);
-        ui_draw_text(TextFormat("%.1f steps/s", steps_per_second), 550, h - 54, 15, (Color){205, 218, 232, 255});
-        ui_draw_text("GOLD: changed   BLUE: read", 42, h - 100, 14, (Color){174, 189, 205, 255});
-        ui_draw_fitted("Hold N/B: repeat   P: play/pause   [ ]: speed   F: flow   M: memory", 330, h - 100, 13, w - 360, (Color){151, 164, 184, 255});
+        ui_draw_text(TextFormat("%.1f steps/s", steps_per_second), 550, h - 54, 15, ORI_COLOR_TEXT);
+        ui_draw_text("GOLD: changed   BLUE: read", 42, h - 100, 14, ORI_COLOR_MUTED_TEXT);
+        ui_draw_fitted("Hold N/B: repeat   P: play/pause   [ ]: speed   C: bytecode   F: flow   M: memory", 330, h - 100, 13, w - 360, ORI_COLOR_FAINT_TEXT);
         EndDrawing();
     }
 
@@ -1846,6 +2057,10 @@ int main(int argc, char **argv) {
     CloseWindow();
     flow_layout_free(cached_flow_layout);
     orion_trace_free(&trace);
+    free(bytecode_instructions);
+    free(bytecode_event_indexes);
+    free(bytecode_step_offsets);
+    free_source(&bytecode);
     free_source(&source);
     free(contents);
     free_token_stream(&tokens);

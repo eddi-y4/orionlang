@@ -3,47 +3,23 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
-
-#define STACK_SIZE 256
-#define HEAP_SIZE  (1024 * 1024) // 1 MB Managed Heap
-#define NUM_REGS   16
-
-// Generate Opcode Enum automatically via X-Macros
-typedef enum {
-#define X(name, mask, ...) OP_##name,
-#include "orion/opcode.def.h"
-#undef X
-    OP_COUNT
-} Opcode;
-
-// Heap Block Header for Manual Memory Management & Visualizers
-typedef struct {
-    uint32_t size;         // Payload size in bytes
-    bool is_free;          // True if unallocated/freed
-    uint32_t magic;        // Magic number (0xDEADBEEF) to catch corruption/dangling pointers
-    uint32_t capacity;
-} HeapHeader;
-
-// Virtual Machine Execution Context State
-typedef struct {
-    uint64_t ip;               // Instruction Pointer
-    uint64_t regs[NUM_REGS];   // General Purpose Registers (r0 - r15)
-    
-    // Call Stack for Functions (CALL / RET)
-    uint64_t call_stack[STACK_SIZE];
-    int call_sp;
-    
-    // Local Variable Frame Slots
-    uint64_t local_slots[STACK_SIZE];
-    
-    // Heap Memory Space
-    uint8_t heap[HEAP_SIZE];
-    size_t heap_top;           // Bump allocation pointer
-} VM;
+#include "orion/vm.h"
 
 // Initialize the Virtual Machine
 void vm_init(VM *vm) {
     memset(vm, 0, sizeof(VM));
+    vm->heap = calloc(HEAP_SIZE, 1);
+    if (!vm->heap) {
+        perror("allocating VM heap");
+        exit(EXIT_FAILURE);
+    }
+    vm->heap_top = 0;
+}
+
+void vm_destroy(VM *vm) {
+    if (!vm) return;
+    free(vm->heap);
+    vm->heap = NULL;
     vm->heap_top = 0;
 }
 

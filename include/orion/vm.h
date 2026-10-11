@@ -7,7 +7,7 @@
 #include <stddef.h>
 
 #define STACK_SIZE 256
-#define HEAP_SIZE  (1024 * 1024) // 1 MB Managed Heap
+#define HEAP_SIZE  (16u * 1024u * 1024u) // 16 MiB managed heap
 #define NUM_REGS   16
 
 typedef struct {
@@ -23,7 +23,7 @@ typedef struct {
     uint64_t call_stack[STACK_SIZE];
     int call_sp;
     uint64_t local_slots[STACK_SIZE];
-    uint8_t heap[HEAP_SIZE];
+    uint8_t *heap;
     size_t heap_top;
 } VM;
 
@@ -38,6 +38,7 @@ typedef enum {
 
 
 void vm_init(VM *vm);
+void vm_destroy(VM *vm);
 uint64_t heap_alloc(VM *vm, uint32_t size);
 void heap_free(VM *vm, uint64_t address);
 uint64_t heap_load_u64(VM *vm, uint64_t address);

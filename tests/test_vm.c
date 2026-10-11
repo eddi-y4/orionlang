@@ -23,6 +23,7 @@ int main(void) {
     assert(vm.heap_top == high_water);
     assert(second != reused);
 
+    vm_destroy(&vm);
     vm_init(&vm);
     uint8_t code[] = {
         OP_CONST, 1, 0,0,0,0,0,0,0,0,
@@ -37,6 +38,7 @@ int main(void) {
     assert(vm.regs[2] == 42);
     assert(vm.regs[3] == 77); /* STORE_FIELD consumed only its declared operands. */
 
+    vm_destroy(&vm);
     puts("VM memory and instruction tests passed");
     return 0;
 }

@@ -72,6 +72,7 @@ static void trace_statement(Runtime *rt, Frame *current, ASTNode *node) {
     rt->current_trace_index = trace->count - 1;
     rt->has_current_trace = 1;
     step->source_line = node->opToken.line;
+    step->statement_id = (uintptr_t)node;
     snprintf(step->instruction, sizeof(step->instruction), "%s", node->opToken.lexeme);
 
     Frame *call_frames[ORION_TRACE_MAX_FRAMES];
@@ -616,9 +617,11 @@ static int run_program_internal(ASTNode *program, OrionTrace *trace) {
     if (main_fn) {
         Frame frame = {.parent = &global, .function = main_fn->opToken.lexeme}; rt.depth = 1;
         Result r = execute_list(&rt, &frame, main_fn->left);
+        vm_destroy(&rt.vm);
         return (int)(int64_t)r.value;
     }
     Result r = execute_list(&rt, &global, program->left);
+    vm_destroy(&rt.vm);
     return (int)(int64_t)r.value;
 }
 

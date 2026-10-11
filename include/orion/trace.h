@@ -54,6 +54,7 @@ typedef struct {
 
 typedef struct {
     int source_line;
+    uintptr_t statement_id;
     char instruction[ORION_TRACE_MESSAGE];
     OrionTraceFrame *frames;
     size_t frame_count;

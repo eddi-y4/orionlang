@@ -4,5 +4,6 @@
 #include "ast.h"
 
 int write_bytecode_listing(ASTNode *program, const char *path);
+char *generate_bytecode_listing(ASTNode *program);
 
 #endif

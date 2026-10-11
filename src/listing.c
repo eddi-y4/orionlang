@@ -1,10 +1,16 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include "orion/listing.h"
 
 typedef struct LoopTarget { unsigned break_label; unsigned continue_label; struct LoopTarget *parent; } LoopTarget;
-typedef struct { FILE *out; unsigned label; LoopTarget *loop; } Listing;
+typedef struct { FILE *out; unsigned label; LoopTarget *loop; int trace_markers; } Listing;
 static void expression(Listing *, ASTNode *);
 static void statements(Listing *, ASTNode *);
+
+static void statement_marker(Listing *l, ASTNode *n) {
+    if (l->trace_markers)
+        fprintf(l->out, ";@ %d %s %p\n", n->opToken.line, n->opToken.lexeme, (void *)n);
+}
 
 static void expression(Listing *l, ASTNode *n) {
     if (!n) { fputs("PUSH_I64 0\n", l->out); return; }
@@ -42,7 +48,9 @@ static void store_target(Listing *l, ASTNode *target) {
     else if (target && target->type == AST_FIELD_ACCESS) fprintf(l->out, "STORE_FIELD %s\n", target->opToken.lexeme);
 }
 static void statements(Listing *l, ASTNode *n) {
-    for (; n; n = n->next) switch (n->type) {
+    for (; n; n = n->next) {
+        statement_marker(l, n);
+        switch (n->type) {
         case AST_VAR_DECL:
             expression(l, n->right); fprintf(l->out, "DECLARE_LOCAL %s\n", n->opToken.lexeme); break;
         case AST_ASSIGN:
@@ -67,7 +75,7 @@ static void statements(Listing *l, ASTNode *n) {
             unsigned else_id = l->label++, end_id = l->label++;
             expression(l, n->left); fprintf(l->out, "JUMP_IF_FALSE L%u\n", else_id);
             statements(l, n->right);
-            if (n->extra) { fprintf(l->out, "JUMP L%u\nL%u:\n", end_id, else_id); statements(l, n->extra); fprintf(l->out, "L%u:\n", end_id); }
+            if (n->extra) { statement_marker(l, n); fprintf(l->out, "JUMP L%u\nL%u:\n", end_id, else_id); statements(l, n->extra); statement_marker(l, n); fprintf(l->out, "L%u:\n", end_id); }
             else fprintf(l->out, "L%u:\n", else_id);
             break;
         }
@@ -79,15 +87,14 @@ static void statements(Listing *l, ASTNode *n) {
             l->loop = &loop;
             statements(l, n->right);
             l->loop = loop.parent;
-            fprintf(l->out, "JUMP L%u\nL%u:\n", start_id, end_id); break;
+            statement_marker(l, n); fprintf(l->out, "JUMP L%u\nL%u:\n", start_id, end_id); break;
         }
         default: fprintf(l->out, "; unsupported statement node %d\n", n->type); break;
+        }
     }
 }
-int write_bytecode_listing(ASTNode *program, const char *path) {
-    FILE *out = fopen(path, "w");
-    if (!out) { perror(path); return 0; }
-    Listing l = {.out = out};
+static void emit_listing(FILE *out, ASTNode *program, int trace_markers) {
+    Listing l = {.out = out, .trace_markers = trace_markers};
     fputs("; OrionLang text-form virtual instructions\n; Generated listing; current runtime executes the AST interpreter.\n\n", out);
     for (ASTNode *s = program->right; s; s = s->next) {
         fprintf(out, "STRUCT %s\n", s->opToken.lexeme);
@@ -100,5 +107,26 @@ int write_bytecode_listing(ASTNode *program, const char *path) {
         for (ASTNode *param = fn->extra; param; param = param->next) fprintf(out, "PARAM %s\n", param->opToken.lexeme);
         statements(&l, fn->left); fputs("END_FUNC\n\n", out);
     }
+}
+
+char *generate_bytecode_listing(ASTNode *program) {
+    FILE *out = tmpfile();
+    if (!out) return NULL;
+    emit_listing(out, program, 1);
+    if (fflush(out) != 0 || fseek(out, 0, SEEK_END) != 0) { fclose(out); return NULL; }
+    long length = ftell(out);
+    if (length < 0 || fseek(out, 0, SEEK_SET) != 0) { fclose(out); return NULL; }
+    char *text = malloc((size_t)length + 1);
+    if (!text) { fclose(out); return NULL; }
+    size_t read_count = fread(text, 1, (size_t)length, out);
+    text[read_count] = '\0';
+    fclose(out);
+    return text;
+}
+
+int write_bytecode_listing(ASTNode *program, const char *path) {
+    FILE *out = fopen(path, "w");
+    if (!out) { perror(path); return 0; }
+    emit_listing(out, program, 0);
     return fclose(out) == 0;
 }
