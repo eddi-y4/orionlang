@@ -1,0 +1,36 @@
+// Recursive Towers of Hanoi demo with four disks.
+// The optimal solution takes 2^n - 1 moves: 15 for four disks.
+
+fn hanoi(int disks, int source, int spare, int target) -> int {
+    if (disks == 1) {
+        print("Move disk:");
+        print(disks);
+        print("From peg:");
+        print(source);
+        print("To peg:");
+        print(target);
+        return 1;
+    }
+
+    int moves = 0;
+    moves = moves + hanoi(disks - 1, source, target, spare);
+
+    print("Move disk:");
+    print(disks);
+    print("From peg:");
+    print(source);
+    print("To peg:");
+    print(target);
+    moves = moves + 1;
+
+    moves = moves + hanoi(disks - 1, spare, source, target);
+    return moves;
+}
+
+fn main() -> int {
+    int disk_count = 4;
+    int total_moves = hanoi(disk_count, 1, 2, 3);
+    print("Total moves:");
+    print(total_moves);
+    return 0;
+}

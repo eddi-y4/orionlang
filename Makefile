@@ -4,6 +4,7 @@ CFLAGS = -Wall -Wextra -g -Iinclude
 # Target Executable Name
 TARGET = ori_vm
 VISUALIZER = ori_stack_viz
+ORI_FILE ?= examples/hello.ori
 TEST_TARGET = build/test_vm
 LANGUAGE_TEST_TARGET = build/test_language
 RAYLIB_PKG_CFLAGS = $(shell pkg-config --cflags raylib 2>/dev/null)
@@ -32,18 +33,18 @@ $(TARGET): $(OBJS)
 	$(CC) $(CFLAGS) -o $(TARGET) $(OBJS)
 
 # Compile source files into the build folder
-build/%.o: src/%.c $(wildcard include/orion/*.h)
+build/%.o: src/%.c $(wildcard include/orion/*.h include/orion/*.def.h)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # Run the compiled VM engine with the example source file
 run: all
 	./$(TARGET) examples/two_sum.ori
 
-$(VISUALIZER): src/stack_visualizer.c
-	$(CC) $(CFLAGS) $(RAYLIB_CFLAGS) -o $@ $< $(RAYLIB_LIBS) $(RAYLIB_PLATFORM_LIBS)
+$(VISUALIZER): src/stack_visualizer.c src/lexer.c src/language_parser.c src/interpreter.c src/vm.c $(wildcard include/orion/*.h include/orion/*.def.h) assets/NotoSans-VariableFont.ttf
+	$(CC) $(CFLAGS) $(RAYLIB_CFLAGS) -o $@ src/stack_visualizer.c src/lexer.c src/language_parser.c src/interpreter.c src/vm.c $(RAYLIB_LIBS) $(RAYLIB_PLATFORM_LIBS)
 
 visualizer: $(VISUALIZER)
-	./$(VISUALIZER)
+	./$(VISUALIZER) $(ORI_FILE)
 
 $(TEST_TARGET): tests/test_vm.c src/vm.c include/orion/vm.h include/orion/opcode.def.h
 	$(CC) $(CFLAGS) -o $@ tests/test_vm.c src/vm.c
@@ -53,7 +54,7 @@ test: $(TEST_TARGET)
 	$(MAKE) $(LANGUAGE_TEST_TARGET)
 	./$(LANGUAGE_TEST_TARGET)
 
-$(LANGUAGE_TEST_TARGET): tests/test_language.c src/lexer.c src/language_parser.c src/interpreter.c src/vm.c
+$(LANGUAGE_TEST_TARGET): tests/test_language.c src/lexer.c src/language_parser.c src/interpreter.c src/vm.c $(wildcard include/orion/*.h include/orion/*.def.h)
 	$(CC) $(CFLAGS) -o $@ tests/test_language.c src/lexer.c src/language_parser.c src/interpreter.c src/vm.c
 
 # Clean up build artifacts and target binary

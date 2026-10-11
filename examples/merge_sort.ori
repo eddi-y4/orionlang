@@ -1,0 +1,113 @@
+// Merge sort on a 37-element float array with fractional values.
+
+fn merge(float* values, float* scratch, int left, int middle, int right) -> int {
+    int i = left;
+    int j = middle;
+    int out = left;
+
+    while (i < middle && j < right) {
+        if (values[i] <= values[j]) {
+            scratch[out] = values[i];
+            i = i + 1;
+        } else {
+            scratch[out] = values[j];
+            j = j + 1;
+        }
+        out = out + 1;
+    }
+
+    while (i < middle) {
+        scratch[out] = values[i];
+        i = i + 1;
+        out = out + 1;
+    }
+
+    while (j < right) {
+        scratch[out] = values[j];
+        j = j + 1;
+        out = out + 1;
+    }
+
+    int index = left;
+    while (index < right) {
+        values[index] = scratch[index];
+        index = index + 1;
+    }
+    return 0;
+}
+
+fn mergeSort(float* values, float* scratch, int left, int right) -> int {
+    if (right - left <= 1) {
+        return 0;
+    }
+
+    int middle = left + (right - left) / 2;
+    mergeSort(values, scratch, left, middle);
+    mergeSort(values, scratch, middle, right);
+    merge(values, scratch, left, middle, right);
+    return 0;
+}
+
+fn main() -> int {
+    int count = 37;
+    float* values = alloc float[37];
+    float* scratch = alloc float[37];
+
+    values[0] = 42.50;
+    values[1] = -15.0;
+    values[2] = 87.5;
+    values[3] = 23.0;
+    values[4] = -3.75;
+    values[5] = 61.25;
+    values[6] = 12.5;
+    values[7] = -42.5;
+    values[8] = 30.0;
+    values[9] = 5.0;
+    values[10] = 18.75;
+    values[11] = -6.25;
+    values[12] = 51.0;
+    values[13] = 7.25;
+    values[14] = -2.8;
+    values[15] = 39.0;
+    values[16] = 16.25;
+    values[17] = -0.75;
+    values[18] = 48.0;
+    values[19] = 9.5;
+    values[20] = -21.0;
+    values[21] = 3.375;
+    values[22] = 2.5;
+    values[23] = 5.575;
+    values[24] = -9.5;
+    values[25] = 27.5;
+    values[26] = 11.25;
+    values[27] = -35.0;
+    values[28] = 44.5;
+    values[29] = 5.75;
+    values[30] = -1.25;
+    values[31] = 22.0;
+    values[32] = 36.75;
+    values[33] = -18.0;
+    values[34] = 8.0;
+    values[35] = 53.0;
+    values[36] = 14.25;
+
+    print("Before sort:");
+    int index = 0;
+    while (index < count) {
+        print(values[index]);
+        index = index + 1;
+    }
+
+    mergeSort(values, scratch, 0, count);
+
+    print("After sort (ascending):");
+    index = 0;
+    while (index < count) {
+        print(values[index]);
+        index = index + 1;
+    }
+
+    free(scratch);
+    free(values);
+    return 0;
+}

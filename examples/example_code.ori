@@ -33,6 +33,28 @@ fn factorial(int n) -> int {
     return n * factorial(n - 1);
 }
 
+// break exits only the nearest loop; continue skips to its next condition check.
+fn loopControlDemo() -> int {
+    int i = 0;
+    int total = 0;
+    while (i < 5) {
+        i = i + 1;
+        if (i == 2) {
+            continue;
+        }
+
+        int j = 0;
+        while (j < 5) {
+            j = j + 1;
+            if (j == 3) {
+                break;
+            }
+            total = total + 1;
+        }
+    }
+    return total;
+}
+
 fn reverseList(Node* head) -> Node* {
     Node* previous = null;
     Node* current = head;
@@ -64,6 +86,8 @@ fn main() -> int {
     // Recursive function calls and if/else with logical operators.
     print("5 factorial:");
     print(factorial(5));
+    print("Nested-loop break/continue demo total (expected 8):");
+    print(loopControlDemo());
     if (total >= 30 && !(total < 30)) {
         print("The sum is at least 30.");
     } else {

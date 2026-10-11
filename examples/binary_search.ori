@@ -2,7 +2,8 @@ fn binarySearch(int* values, int count, int target) -> int {
     int low = 0;
     int high = count - 1;
     while (low <= high) {
-        int mid = low + (high - low) / 2;
+        int mid = 0;
+        mid = low + (high - low) / 2;
         if (values[mid] == target) {
             return mid;
         } else {
@@ -17,16 +18,17 @@ fn binarySearch(int* values, int count, int target) -> int {
 }
 
 fn main() -> int {
-    int* values = alloc int[7];
+	int size = 7;
+    int* values = alloc int[size];
     values[0] = -4;
     values[1] = -1;
     values[2] = 0;
     values[3] = 3;
-    values[4] = 600;
+    values[4] = 6;
     values[5] = 12;
     values[6] = 20;
 
-    int index = binarySearch(values, 7, 8);
+    int index = binarySearch(values, size, -1);
     print(index);
     free(values);
     return 0;

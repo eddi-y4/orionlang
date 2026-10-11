@@ -1,0 +1,100 @@
+; OrionLang text-form virtual instructions
+; Generated listing; current runtime executes the AST interpreter.
+
+FUNC hanoi
+PARAM disks
+PARAM source
+PARAM spare
+PARAM target
+LOAD_LOCAL disks
+PUSH_I64 1
+BINARY_==
+JUMP_IF_FALSE L0
+PUSH_STRING "Move disk:"
+CALL print 1
+POP
+LOAD_LOCAL disks
+CALL print 1
+POP
+PUSH_STRING "From peg:"
+CALL print 1
+POP
+LOAD_LOCAL source
+CALL print 1
+POP
+PUSH_STRING "To peg:"
+CALL print 1
+POP
+LOAD_LOCAL target
+CALL print 1
+POP
+PUSH_I64 1
+RETURN
+L0:
+PUSH_I64 0
+DECLARE_LOCAL moves
+LOAD_LOCAL moves
+LOAD_LOCAL disks
+PUSH_I64 1
+BINARY_-
+LOAD_LOCAL source
+LOAD_LOCAL target
+LOAD_LOCAL spare
+CALL hanoi 4
+BINARY_+
+STORE_LOCAL moves
+PUSH_STRING "Move disk:"
+CALL print 1
+POP
+LOAD_LOCAL disks
+CALL print 1
+POP
+PUSH_STRING "From peg:"
+CALL print 1
+POP
+LOAD_LOCAL source
+CALL print 1
+POP
+PUSH_STRING "To peg:"
+CALL print 1
+POP
+LOAD_LOCAL target
+CALL print 1
+POP
+LOAD_LOCAL moves
+PUSH_I64 1
+BINARY_+
+STORE_LOCAL moves
+LOAD_LOCAL moves
+LOAD_LOCAL disks
+PUSH_I64 1
+BINARY_-
+LOAD_LOCAL spare
+LOAD_LOCAL source
+LOAD_LOCAL target
+CALL hanoi 4
+BINARY_+
+STORE_LOCAL moves
+LOAD_LOCAL moves
+RETURN
+END_FUNC
+
+FUNC main
+PUSH_I64 4
+DECLARE_LOCAL disk_count
+LOAD_LOCAL disk_count
+PUSH_I64 1
+PUSH_I64 2
+PUSH_I64 3
+CALL hanoi 4
+DECLARE_LOCAL total_moves
+PUSH_STRING "Total moves:"
+CALL print 1
+POP
+LOAD_LOCAL total_moves
+CALL print 1
+POP
+PUSH_I64 0
+RETURN
+END_FUNC
+

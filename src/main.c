@@ -39,7 +39,7 @@ int main(int argc, char **argv) {
     printf("[Lexer] Generated %d tokens from %s.\n", tokens.count, source_path);
 
     // 2. Parsing phase
-    Parser parser = { tokens.data, 0, tokens.count };
+    Parser parser = { .tokens = tokens.data, .current = 0, .token_count = tokens.count };
     ASTNode *ast_root = parse_program(&parser);
     printf("[Parser] Abstract Syntax Tree successfully constructed.\n");
 

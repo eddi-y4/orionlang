@@ -9,6 +9,8 @@ X(AST_STRUCT_DECL, 1, 0, 0) // Named record layout
 X(AST_FIELD_DECL,  0, 0, 1) // Record field
 X(AST_IF_STMT,     1, 1, 0) // Has a condition expr and body/else blocks (Diamond node in Raylib)
 X(AST_WHILE_STMT,  1, 1, 0) // Has a condition expr and loop body block (Loop backedge in Raylib)
+X(AST_BREAK,      0, 0, 0)
+X(AST_CONTINUE,   0, 0, 0)
 
 // Statements
 X(AST_VAR_DECL,    0, 0, 1) // Type, Name, Initializer Expression

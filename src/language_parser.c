@@ -18,6 +18,11 @@ static ASTNode *node(ASTNodeType type, Token token) {
     if (!n) { perror("calloc"); exit(1); }
     n->type = type; n->opToken = token; return n;
 }
+static ASTNode *type_metadata(Token type, int pointer) {
+    ASTNode *info = node(AST_LITERAL, type);
+    if (pointer) info->right = node(AST_LITERAL, (Token){TOKEN_STAR, "*", type.line, type.column});
+    return info;
+}
 static ASTNode *parse_expr(Parser *p, int min_prec);
 static ASTNode *parse_stmt(Parser *p);
 static ASTNode *parse_block(Parser *p);
@@ -110,13 +115,24 @@ static ASTNode *parse_stmt(Parser *p) {
         if (match(p, TOKEN_ELSE)) n->extra = parse_block(p); return n;
     }
     if (match(p, TOKEN_WHILE)) {
-        expect(p, TOKEN_LPAREN, "'('"); ASTNode *n = node(AST_WHILE_STMT, t); n->left = parse_expr(p, 0); expect(p, TOKEN_RPAREN, "')'"); n->right = parse_block(p); return n;
+        expect(p, TOKEN_LPAREN, "'('"); ASTNode *n = node(AST_WHILE_STMT, t); n->left = parse_expr(p, 0); expect(p, TOKEN_RPAREN, "')'");
+        p->loop_depth++; n->right = parse_block(p); p->loop_depth--; return n;
+    }
+    if (match(p, TOKEN_BREAK) || match(p, TOKEN_CONTINUE)) {
+        int is_break = t.type == TOKEN_BREAK;
+        if (!p->loop_depth) {
+            fprintf(stderr, "Parser error at %d:%d: '%s' is only valid inside a while loop\n", t.line, t.column, t.lexeme);
+            exit(1);
+        }
+        expect(p, TOKEN_SEMI, "';'");
+        return node(is_break ? AST_BREAK : AST_CONTINUE, t);
     }
     if (match(p, TOKEN_RETURN)) { ASTNode *n = node(AST_RETURN, t); if (!match(p, TOKEN_SEMI)) { n->left = parse_expr(p, 0); expect(p, TOKEN_SEMI, "';'"); } return n; }
     if (match(p, TOKEN_FREE)) { ASTNode *n = node(AST_FREE, t); expect(p, TOKEN_LPAREN, "'('"); n->left = parse_expr(p, 0); expect(p, TOKEN_RPAREN, "')'"); expect(p, TOKEN_SEMI, "';'"); return n; }
     if (is_type(p)) {
-        take(p); (void)match(p, TOKEN_STAR);
+        Token declared_type = take(p); int is_pointer = match(p, TOKEN_STAR);
         Token name = expect(p, TOKEN_IDENT, "variable name"); ASTNode *n = node(AST_VAR_DECL, name);
+        n->extra = type_metadata(declared_type, is_pointer);
         n->left = node(AST_IDENT, name);
         if (match(p, TOKEN_ASSIGN)) n->right = parse_expr(p, 0);
         expect(p, TOKEN_SEMI, "';'"); return n;
@@ -132,24 +148,34 @@ static ASTNode *parse_function(Parser *p) {
     expect(p, TOKEN_LPAREN, "'('"); ASTNode *params = NULL;
     if (!match(p, TOKEN_RPAREN)) {
         do {
-            if (peek(p).type == TOKEN_INT_T || peek(p).type == TOKEN_FLOAT_T || peek(p).type == TOKEN_CHAR_T || peek(p).type == TOKEN_IDENT) take(p);
-            match(p, TOKEN_STAR);
-            params = append(params, node(AST_IDENT, expect(p, TOKEN_IDENT, "parameter name")));
+            Token declared_type = {TOKEN_EOF, "?", peek(p).line, peek(p).column};
+            int has_type = peek(p).type == TOKEN_INT_T || peek(p).type == TOKEN_FLOAT_T || peek(p).type == TOKEN_CHAR_T || peek(p).type == TOKEN_IDENT;
+            if (has_type) declared_type = take(p);
+            int is_pointer = match(p, TOKEN_STAR);
+            ASTNode *param = node(AST_IDENT, expect(p, TOKEN_IDENT, "parameter name"));
+            if (has_type) param->extra = type_metadata(declared_type, is_pointer);
+            params = append(params, param);
         } while (match(p, TOKEN_COMMA));
         expect(p, TOKEN_RPAREN, "')'");
     }
     f->extra = params;
-    if (match(p, TOKEN_ARROW)) { if (peek(p).type != TOKEN_LBRACE) take(p); (void)match(p, TOKEN_STAR); }
+    if (match(p, TOKEN_ARROW) && peek(p).type != TOKEN_LBRACE) {
+        Token return_type=take(p);
+        int return_pointer=match(p,TOKEN_STAR);
+        f->right=type_metadata(return_type,return_pointer);
+    }
     f->left = parse_block(p); (void)fn; return f;
 }
 static ASTNode *parse_struct(Parser *p) {
     take(p); ASTNode *s = node(AST_STRUCT_DECL, expect(p, TOKEN_IDENT, "struct name"));
     expect(p, TOKEN_LBRACE, "'{'");
     while (peek(p).type != TOKEN_RBRACE && peek(p).type != TOKEN_EOF) {
+        Token field_type = peek(p);
         if (peek(p).type == TOKEN_INT_T || peek(p).type == TOKEN_FLOAT_T || peek(p).type == TOKEN_CHAR_T || peek(p).type == TOKEN_IDENT) take(p);
-        else expect(p, TOKEN_IDENT, "field type");
-        (void)match(p, TOKEN_STAR);
+        else field_type = expect(p, TOKEN_IDENT, "field type");
+        int is_pointer = match(p, TOKEN_STAR);
         ASTNode *field = node(AST_FIELD_DECL, expect(p, TOKEN_IDENT, "field name"));
+        field->extra = type_metadata(field_type, is_pointer);
         expect(p, TOKEN_SEMI, "';'"); s->left = append(s->left, field);
     }
     expect(p, TOKEN_RBRACE, "'}'");

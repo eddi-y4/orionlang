@@ -74,7 +74,9 @@ TokenStream lex_source(const char *source) {
             case ']': add_token(&stream, TOKEN_RBRACK, "]", line, col); i++; col++; continue;
             case ';': add_token(&stream, TOKEN_SEMI, ";", line, col); i++; col++; continue;
             case ',': add_token(&stream, TOKEN_COMMA, ",", line, col); i++; col++; continue;
-            case '.': add_token(&stream, TOKEN_DOT, ".", line, col); i++; col++; continue;
+            case '.':
+                if (isdigit((unsigned char)source[i + 1])) break;
+                add_token(&stream, TOKEN_DOT, ".", line, col); i++; col++; continue;
         }
 
         // Literals: Characters ('a')
@@ -111,12 +113,25 @@ TokenStream lex_source(const char *source) {
         }
 
         // Numeric Literals (int / float)
-        if (isdigit(c)) {
+        if (isdigit((unsigned char)c) || (c == '.' && isdigit((unsigned char)source[i + 1]))) {
             int start = i;
             bool is_float = false;
-            while (i < len && (isdigit(source[i]) || source[i] == '.')) {
-                if (source[i] == '.') is_float = true;
+            while (i < len && isdigit((unsigned char)source[i])) i++;
+            if (i < len && source[i] == '.') {
+                is_float = true;
                 i++;
+                while (i < len && isdigit((unsigned char)source[i])) i++;
+            }
+            if (i < len && (source[i] == 'e' || source[i] == 'E')) {
+                is_float = true;
+                i++;
+                if (i < len && (source[i] == '+' || source[i] == '-')) i++;
+                int exponent_start = i;
+                while (i < len && isdigit((unsigned char)source[i])) i++;
+                if (i == exponent_start) {
+                    fprintf(stderr, "Lexer Error at %d:%d: expected exponent digits\n", line, col);
+                    exit(1);
+                }
             }
             int len_num = i - start;
             char *lexeme = malloc(len_num + 1);
@@ -145,6 +160,8 @@ TokenStream lex_source(const char *source) {
             else if (strcmp(lexeme, "if") == 0) type = TOKEN_IF;
             else if (strcmp(lexeme, "else") == 0) type = TOKEN_ELSE;
             else if (strcmp(lexeme, "while") == 0) type = TOKEN_WHILE;
+            else if (strcmp(lexeme, "break") == 0) type = TOKEN_BREAK;
+            else if (strcmp(lexeme, "continue") == 0) type = TOKEN_CONTINUE;
             else if (strcmp(lexeme, "return") == 0) type = TOKEN_RETURN;
             else if (strcmp(lexeme, "alloc") == 0) type = TOKEN_ALLOC;
             else if (strcmp(lexeme, "free") == 0) type = TOKEN_FREE;
