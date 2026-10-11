@@ -1,0 +1,35 @@
+// A small LeetCode-style exercise: return the pair of indices whose values sum to 9.
+fn twoSum(int* nums, int n) -> int {
+    int* answer = alloc int[2];
+    int i = 0;
+    while (i < n) {
+        int j = i + 1;
+        while (j < n) {
+            if (nums[i] + nums[j] == 9) {
+                answer[0] = i;
+                answer[1] = j;
+                return answer;
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    free(answer);
+    return null;
+}
+
+fn main() -> int {
+    int* nums = alloc int[4];
+    nums[0] = 2;
+    nums[1] = 7;
+    nums[2] = 11;
+    nums[3] = 15;
+
+    int* answer = twoSum(nums, 4);
+    int packed = answer[0] * 10 + answer[1];
+    print(packed); // prints 1, representing indices [0, 1]
+
+    free(answer);
+    free(nums);
+    return 0;
+}

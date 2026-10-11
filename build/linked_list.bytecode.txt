@@ -1,0 +1,3 @@
+; OrionLang text-form virtual instructions
+; Generated listing; current runtime executes the AST interpreter.
+

@@ -1,0 +1,11 @@
+; OrionLang text-form virtual instructions
+; Generated listing; current runtime executes the AST interpreter.
+
+FUNC main
+PUSH_STRING "Hello, OrionLang!"
+CALL print 1
+POP
+PUSH_I64 0
+RETURN
+END_FUNC
+

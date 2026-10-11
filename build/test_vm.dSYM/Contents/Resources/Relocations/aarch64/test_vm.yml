@@ -1,0 +1,17 @@
+---
+triple:          'arm64-apple-darwin'
+binary-path:     'build/test_vm'
+relocations:
+  - { offset: 0x26, size: 0x8, addend: 0x0, symName: _main, symObjAddr: 0x0, symBinAddr: 0x100001874, symSize: 0x344 }
+  - { offset: 0x53, size: 0x8, addend: 0x0, symName: _main, symObjAddr: 0x0, symBinAddr: 0x100001874, symSize: 0x344 }
+  - { offset: 0xC4, size: 0x8, addend: 0x0, symName: _put_u64, symObjAddr: 0x344, symBinAddr: 0x100001BB8, symSize: 0x64 }
+  - { offset: 0x21B, size: 0x8, addend: 0x0, symName: _vm_init, symObjAddr: 0x0, symBinAddr: 0x100001C1C, symSize: 0x48 }
+  - { offset: 0x2E3, size: 0x8, addend: 0x0, symName: _vm_init, symObjAddr: 0x0, symBinAddr: 0x100001C1C, symSize: 0x48 }
+  - { offset: 0x307, size: 0x8, addend: 0x0, symName: _heap_alloc, symObjAddr: 0x48, symBinAddr: 0x100001C64, symSize: 0x2A0 }
+  - { offset: 0x3AD, size: 0x8, addend: 0x0, symName: _heap_align, symObjAddr: 0x2E8, symBinAddr: 0x100001F04, symSize: 0x1C }
+  - { offset: 0x3D5, size: 0x8, addend: 0x0, symName: _heap_free, symObjAddr: 0x304, symBinAddr: 0x100001F20, symSize: 0x1D4 }
+  - { offset: 0x44D, size: 0x8, addend: 0x0, symName: _heap_load_u64, symObjAddr: 0x4D8, symBinAddr: 0x1000020F4, symSize: 0x3C }
+  - { offset: 0x491, size: 0x8, addend: 0x0, symName: _heap_resolve, symObjAddr: 0x514, symBinAddr: 0x100002130, symSize: 0x1BC }
+  - { offset: 0x51B, size: 0x8, addend: 0x0, symName: _heap_store_u64, symObjAddr: 0x6D0, symBinAddr: 0x1000022EC, symSize: 0x3C }
+  - { offset: 0x55B, size: 0x8, addend: 0x0, symName: _vm_execute, symObjAddr: 0x70C, symBinAddr: 0x100002328, symSize: 0x17EC }
+...

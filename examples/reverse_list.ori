@@ -1,0 +1,36 @@
+struct Node {
+    int value;
+    Node* next;
+}
+
+fn reverse(Node* head) -> Node* {
+    Node* previous = null;
+    Node* current = head;
+    while (current != null) {
+        Node* next = current.next;
+        current.next = previous;
+        previous = current;
+        current = next;
+    }
+    return previous;
+}
+
+fn main() -> int {
+    Node* first = alloc Node;
+    Node* second = alloc Node;
+    Node* third = alloc Node;
+    first.value = 1;
+    first.next = second;
+    second.value = 2;
+    second.next = third;
+    third.value = 3;
+    third.next = null;
+
+    Node* reversed = reverse(first);
+    print(reversed.value); // 3
+
+    free(reversed.next.next);
+    free(reversed.next);
+    free(reversed);
+    return 0;
+}

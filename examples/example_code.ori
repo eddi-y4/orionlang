@@ -1,0 +1,111 @@
+// Walkthrough of the OrionLang features currently implemented.
+struct Node {
+    int value;
+    Node* next;
+}
+
+fn sumArray(int* values, int length) -> int {
+    int i = 0;
+    int total = 0;
+    while (i < length) {
+        total = total + values[i];
+        i = i + 1;
+    }
+    return total;
+}
+
+fn findValue(int* values, int length, int target) -> int {
+    int i = 0;
+    while (i < length) {
+        if (values[i] == target) {
+            return i;
+        } else {
+            i = i + 1;
+        }
+    }
+    return -1;
+}
+
+fn factorial(int n) -> int {
+    if (n <= 1) {
+        return 1;
+    }
+    return n * factorial(n - 1);
+}
+
+fn reverseList(Node* head) -> Node* {
+    Node* previous = null;
+    Node* current = head;
+    while (current != null) {
+        Node* following = current.next;
+        current.next = previous;
+        previous = current;
+        current = following;
+    }
+    return previous;
+}
+
+fn main() -> int {
+    print("Hello from OrionLang!");
+
+    // Heap arrays, arguments, indexing, arithmetic, comparisons and loops.
+    int* values = alloc int[4];
+    values[0] = 3;
+    values[1] = 6;
+    values[2] = 9;
+    values[3] = 12;
+    int total = sumArray(values, 4);
+    int found = findValue(values, 4, 9);
+    print("Array sum:");
+    print(total);
+    print("Index of 9:");
+    print(found);
+
+    // Recursive function calls and if/else with logical operators.
+    print("5 factorial:");
+    print(factorial(5));
+    if (total >= 30 && !(total < 30)) {
+        print("The sum is at least 30.");
+    } else {
+        print("The sum is below 30.");
+    }
+    if (found < 0 || total == 0) {
+        print("Search missed.");
+    } else {
+        print("Search succeeded.");
+    }
+
+    // Unary minus, modulo, shifts, null, and a character literal.
+    int negative = -7;
+    int remainder = 17 % 5;
+    int shifted = 3 << 2;
+    print("Negative value:");
+    print(negative);
+    print("17 modulo 5:");
+    print(remainder);
+    print("3 shifted left by 2:");
+    print(shifted);
+    print('A');
+
+    // Struct allocation, pointer fields, linked-list traversal/reversal, and frees.
+    Node* first = alloc Node;
+    Node* second = alloc Node;
+    Node* third = alloc Node;
+    first.value = 1;
+    first.next = second;
+    second.value = 2;
+    second.next = third;
+    third.value = 3;
+    third.next = null;
+
+    Node* reversed = reverseList(first);
+    print("Reversed list head:");
+    print(reversed.value);
+    free(reversed.next.next);
+    free(reversed.next);
+    free(reversed);
+
+    free(values);
+    print("Done.");
+    return 0;
+}
