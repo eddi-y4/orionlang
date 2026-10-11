@@ -198,20 +198,6 @@ ASTNode* parse_expr(Parser *p, int min_precedence) {
 
 // --- Statement & Control Flow Parsing ---
 
-//ASTNode* parse_block(Parser *p) {
-//    parser_expect(p, TOKEN_LBRACE, "Expected '{' to start block");
-//    ASTNode *block = create_node(AST_PROGRAM); // Container for statements
-//    
-//    // Parse statements until '}'
-//    while (!parser_check(p, TOKEN_RBRACE) && !parser_check(p, TOKEN_EOF)) {
-//        // Link statements sequentially...
-//        parse_stmt(p);
-//    }
-//    
-//    parser_expect(p, TOKEN_RBRACE, "Expected '}' to close block");
-//    return block;
-//}
-
 ASTNode* parse_if_stmt(Parser *p) {
     parser_advance(p); // consume 'if'
     parser_expect(p, TOKEN_LPAREN, "Expected '(' after 'if'");
@@ -246,28 +232,7 @@ ASTNode* parse_while_stmt(Parser *p) {
     node->right = body;
     return node;
 }
-
-//ASTNode* parse_stmt(Parser *p) {
-//    if (parser_check(p, TOKEN_IF)) return parse_if_stmt(p);
-//    if (parser_check(p, TOKEN_WHILE)) return parse_while_stmt(p);
-//    
-//    // Fallback expression statement or assignment
-//    ASTNode *expr = parse_expr(p, 0);
-//    parser_expect(p, TOKEN_SEMI, "Expected ';' after statement");
-//    return expr;
-//}
-
-// --- Top-Level Program Parser ---
 //
-//ASTNode* parse_program(Parser *p) {
-//    ASTNode *program = create_node(AST_PROGRAM);
-//    while (!parser_check(p, TOKEN_EOF)) {
-//        // Can parse struct_decl or func_decl here
-//        parser_advance(p);
-//    }
-//    return program;
-//}
-
 // Forward declarations
 ASTNode* parse_stmt(Parser *p);
 ASTNode* parse_expr(Parser *p, int min_precedence);
@@ -345,39 +310,6 @@ ASTNode* parse_var_or_assignment(Parser *p) {
     parser_expect(p, TOKEN_SEMI, "Expected ';' after expression");
     return expr;
 }
-// Parse variable declarations or assignments (e.g., int i = 0; or accumulator = ...)
-//ASTNode* parse_var_or_assignment(Parser *p) {
-//    Token tok = parser_peek(p);
-//    
-//    // Check if it's a type declaration (int, float, char, or custom struct name like Node*)
-//    if (tok.type == TOKEN_INT_T || tok.type == TOKEN_FLOAT_T || tok.type == TOKEN_CHAR_T || tok.type == TOKEN_IDENT) {
-//        // Could be a type keyword or a custom type pointer like Node*
-//        TokenType type_tok = tok.type;
-//        parser_advance(p);
-//        
-//        // Handle pointer star if present (e.g., Node*)
-//        if (parser_check(p, TOKEN_STAR)) {
-//            parser_advance(p);
-//        }
-//        
-//        Token ident = parser_expect(p, TOKEN_IDENT, "Expected identifier after type");
-//        
-//        ASTNode *assign_node = create_node(AST_ASSIGN);
-//        assign_node->opToken = ident; // Store variable name
-//        
-//        if (parser_check(p, TOKEN_ASSIGN)) {
-//            parser_advance(p); // consume '='
-//            assign_node->left = parse_expr(p, 0);
-//        }
-//        parser_expect(p, TOKEN_SEMI, "Expected ';' after variable declaration");
-//        return assign_node;
-//    }
-//
-//    // Regular expression statement or assignment
-//    ASTNode *expr = parse_expr(p, 0);
-//    parser_expect(p, TOKEN_SEMI, "Expected ';' after expression");
-//    return expr;
-//}
 
 ASTNode* parse_stmt(Parser *p) {
     if (parser_check(p, TOKEN_IF)) {

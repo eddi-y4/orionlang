@@ -69,7 +69,7 @@ void heap_free(VM *vm, uint64_t address) {
         fprintf(stderr, "Runtime Error: Segmentation Fault / Invalid Free Address\n");
         exit(1);
     }
-    
+
     size_t cursor = 0;
     HeapHeader *header = NULL;
     while (cursor < vm->heap_top) {
@@ -79,15 +79,17 @@ void heap_free(VM *vm, uint64_t address) {
         if (address == cursor + sizeof(*candidate)) { header = candidate; break; }
         cursor += step;
     }
-    if (!header) {
+
+	if (!header) {
         fprintf(stderr, "Runtime Error: Heap Corruption / Invalid Pointer\n");
         exit(1);
     }
+
     if (header->is_free) {
         fprintf(stderr, "Runtime Error: Double Free Detected!\n");
         exit(1);
     }
-    
+
     header->is_free = true;
 }
 
@@ -136,19 +138,22 @@ void vm_execute(VM *vm, const uint8_t *bytecode, size_t code_size) {
                 vm->regs[reg] = imm;
                 break;
             }
-            case OP_MOVE: {
+
+			case OP_MOVE: {
                 uint8_t r1 = bytecode[vm->ip++];
                 uint8_t r2 = bytecode[vm->ip++];
                 vm->regs[r1] = vm->regs[r2];
                 break;
             }
+
             case OP_ADD: {
                 uint8_t r1 = bytecode[vm->ip++];
                 uint8_t r2 = bytecode[vm->ip++];
                 uint8_t r3 = bytecode[vm->ip++];
                 vm->regs[r1] = vm->regs[r2] + vm->regs[r3];
                 break;
-            }
+			}
+
             case OP_SUB: {
                 uint8_t r1 = bytecode[vm->ip++];
                 uint8_t r2 = bytecode[vm->ip++];
@@ -156,6 +161,7 @@ void vm_execute(VM *vm, const uint8_t *bytecode, size_t code_size) {
                 vm->regs[r1] = vm->regs[r2] - vm->regs[r3];
                 break;
             }
+
             case OP_MUL: {
                 uint8_t r1 = bytecode[vm->ip++];
                 uint8_t r2 = bytecode[vm->ip++];
@@ -163,7 +169,8 @@ void vm_execute(VM *vm, const uint8_t *bytecode, size_t code_size) {
                 vm->regs[r1] = vm->regs[r2] * vm->regs[r3];
                 break;
             }
-            case OP_DIV: {
+
+			case OP_DIV: {
                 uint8_t r1 = bytecode[vm->ip++];
                 uint8_t r2 = bytecode[vm->ip++];
                 uint8_t r3 = bytecode[vm->ip++];
@@ -174,18 +181,21 @@ void vm_execute(VM *vm, const uint8_t *bytecode, size_t code_size) {
                 vm->regs[r1] = vm->regs[r2] / vm->regs[r3];
                 break;
             }
+
             case OP_NEG: {
                 uint8_t r1 = bytecode[vm->ip++];
                 uint8_t r2 = bytecode[vm->ip++];
                 vm->regs[r1] = (uint64_t)(-((int64_t)vm->regs[r2]));
                 break;
             }
+
             case OP_NOT: {
                 uint8_t r1 = bytecode[vm->ip++];
                 uint8_t r2 = bytecode[vm->ip++];
                 vm->regs[r1] = (vm->regs[r2] == 0) ? 1 : 0;
                 break;
             }
+
             case OP_FADD: {
                 uint8_t r1 = bytecode[vm->ip++];
                 uint8_t r2 = bytecode[vm->ip++];
@@ -196,6 +206,7 @@ void vm_execute(VM *vm, const uint8_t *bytecode, size_t code_size) {
                 vm->regs[r1] = *(uint64_t*)&res;
                 break;
             }
+
             case OP_FSUB: {
                 uint8_t r1 = bytecode[vm->ip++];
                 uint8_t r2 = bytecode[vm->ip++];
@@ -206,6 +217,7 @@ void vm_execute(VM *vm, const uint8_t *bytecode, size_t code_size) {
                 vm->regs[r1] = *(uint64_t*)&res;
                 break;
             }
+
             case OP_FMUL: {
                 uint8_t r1 = bytecode[vm->ip++];
                 uint8_t r2 = bytecode[vm->ip++];
@@ -216,6 +228,7 @@ void vm_execute(VM *vm, const uint8_t *bytecode, size_t code_size) {
                 vm->regs[r1] = *(uint64_t*)&res;
                 break;
             }
+
             case OP_FDIV: {
                 uint8_t r1 = bytecode[vm->ip++];
                 uint8_t r2 = bytecode[vm->ip++];
@@ -226,6 +239,7 @@ void vm_execute(VM *vm, const uint8_t *bytecode, size_t code_size) {
                 vm->regs[r1] = *(uint64_t*)&res;
                 break;
             }
+
             case OP_BIT_AND: {
                 uint8_t r1 = bytecode[vm->ip++];
                 uint8_t r2 = bytecode[vm->ip++];
@@ -233,13 +247,15 @@ void vm_execute(VM *vm, const uint8_t *bytecode, size_t code_size) {
                 vm->regs[r1] = vm->regs[r2] & vm->regs[r3];
                 break;
             }
-            case OP_BIT_OR: {
+
+			case OP_BIT_OR: {
                 uint8_t r1 = bytecode[vm->ip++];
                 uint8_t r2 = bytecode[vm->ip++];
                 uint8_t r3 = bytecode[vm->ip++];
                 vm->regs[r1] = vm->regs[r2] | vm->regs[r3];
                 break;
             }
+
             case OP_SHL: {
                 uint8_t r1 = bytecode[vm->ip++];
                 uint8_t r2 = bytecode[vm->ip++];
@@ -247,6 +263,7 @@ void vm_execute(VM *vm, const uint8_t *bytecode, size_t code_size) {
                 vm->regs[r1] = vm->regs[r2] << vm->regs[r3];
                 break;
             }
+
             case OP_SHR: {
                 uint8_t r1 = bytecode[vm->ip++];
                 uint8_t r2 = bytecode[vm->ip++];
@@ -254,13 +271,15 @@ void vm_execute(VM *vm, const uint8_t *bytecode, size_t code_size) {
                 vm->regs[r1] = vm->regs[r2] >> vm->regs[r3];
                 break;
             }
-            case OP_CMP_EQ: {
+
+			case OP_CMP_EQ: {
                 uint8_t r1 = bytecode[vm->ip++];
                 uint8_t r2 = bytecode[vm->ip++];
                 uint8_t r3 = bytecode[vm->ip++];
                 vm->regs[r1] = (vm->regs[r2] == vm->regs[r3]) ? 1 : 0;
                 break;
             }
+
             case OP_CMP_NE: {
                 uint8_t r1 = bytecode[vm->ip++];
                 uint8_t r2 = bytecode[vm->ip++];
@@ -268,6 +287,7 @@ void vm_execute(VM *vm, const uint8_t *bytecode, size_t code_size) {
                 vm->regs[r1] = (vm->regs[r2] != vm->regs[r3]) ? 1 : 0;
                 break;
             }
+
             case OP_CMP_LT: {
                 uint8_t r1 = bytecode[vm->ip++];
                 uint8_t r2 = bytecode[vm->ip++];
@@ -275,6 +295,7 @@ void vm_execute(VM *vm, const uint8_t *bytecode, size_t code_size) {
                 vm->regs[r1] = (vm->regs[r2] < vm->regs[r3]) ? 1 : 0;
                 break;
             }
+
             case OP_CMP_LE: {
                 uint8_t r1 = bytecode[vm->ip++];
                 uint8_t r2 = bytecode[vm->ip++];
@@ -282,6 +303,7 @@ void vm_execute(VM *vm, const uint8_t *bytecode, size_t code_size) {
                 vm->regs[r1] = (vm->regs[r2] <= vm->regs[r3]) ? 1 : 0;
                 break;
             }
+
             case OP_CMP_GT: {
                 uint8_t r1 = bytecode[vm->ip++];
                 uint8_t r2 = bytecode[vm->ip++];
@@ -289,6 +311,7 @@ void vm_execute(VM *vm, const uint8_t *bytecode, size_t code_size) {
                 vm->regs[r1] = (vm->regs[r2] > vm->regs[r3]) ? 1 : 0;
                 break;
             }
+
             case OP_CMP_GE: {
                 uint8_t r1 = bytecode[vm->ip++];
                 uint8_t r2 = bytecode[vm->ip++];
@@ -296,11 +319,13 @@ void vm_execute(VM *vm, const uint8_t *bytecode, size_t code_size) {
                 vm->regs[r1] = (vm->regs[r2] >= vm->regs[r3]) ? 1 : 0;
                 break;
             }
+
             case OP_JMP: {
                 uint64_t target = *(uint64_t*)&bytecode[vm->ip];
                 vm->ip = target;
                 break;
             }
+
             case OP_JMP_IF: {
                 uint8_t reg = bytecode[vm->ip++];
                 uint64_t target = *(uint64_t*)&bytecode[vm->ip];
@@ -310,6 +335,7 @@ void vm_execute(VM *vm, const uint8_t *bytecode, size_t code_size) {
                 }
                 break;
             }
+
             case OP_CALL: {
                 uint64_t func_target = *(uint64_t*)&bytecode[vm->ip];
                 vm->ip += 8;
@@ -321,6 +347,7 @@ void vm_execute(VM *vm, const uint8_t *bytecode, size_t code_size) {
                 vm->ip = func_target;
                 break;
             }
+
             case OP_RET: {
                 if (vm->call_sp <= 0) {
                     fprintf(stderr, "Runtime Error: Call Stack Underflow\n");
@@ -329,10 +356,12 @@ void vm_execute(VM *vm, const uint8_t *bytecode, size_t code_size) {
                 vm->ip = vm->call_stack[--vm->call_sp];
                 break;
             }
+
             case OP_HALT: {
                 running = false;
                 break;
             }
+
             case OP_ALLOC: {
                 uint8_t reg = bytecode[vm->ip++];
                 uint16_t type_size = *(uint16_t*)&bytecode[vm->ip];
@@ -340,6 +369,7 @@ void vm_execute(VM *vm, const uint8_t *bytecode, size_t code_size) {
                 vm->regs[reg] = heap_alloc(vm, type_size);
                 break;
             }
+
             case OP_ALLOC_ARR: {
                 uint8_t reg = bytecode[vm->ip++];
                 uint16_t type_size = *(uint16_t*)&bytecode[vm->ip];
@@ -353,11 +383,13 @@ void vm_execute(VM *vm, const uint8_t *bytecode, size_t code_size) {
                 vm->regs[reg] = heap_alloc(vm, (uint32_t)(type_size * count));
                 break;
             }
+
             case OP_FREE: {
                 uint8_t reg = bytecode[vm->ip++];
                 if (vm->regs[reg] != 0) heap_free(vm, vm->regs[reg]);
                 break;
             }
+
             case OP_LOAD_FIELD: {
                 uint8_t r_dest = bytecode[vm->ip++];
                 uint8_t r_src = bytecode[vm->ip++];
@@ -368,6 +400,7 @@ void vm_execute(VM *vm, const uint8_t *bytecode, size_t code_size) {
                 memcpy(&vm->regs[r_dest], heap_resolve(vm, addr, sizeof(uint64_t)), sizeof(uint64_t));
                 break;
             }
+
             case OP_STORE_FIELD: {
                 uint8_t r_dest = bytecode[vm->ip++];
                 uint16_t offset = *(uint16_t*)&bytecode[vm->ip];
@@ -378,6 +411,7 @@ void vm_execute(VM *vm, const uint8_t *bytecode, size_t code_size) {
                 memcpy(heap_resolve(vm, addr, sizeof(uint64_t)), &vm->regs[r_val], sizeof(uint64_t));
                 break;
             }
+
             case OP_LOAD_ELEM: {
                 uint8_t r_dest = bytecode[vm->ip++];
                 uint8_t r_arr = bytecode[vm->ip++];
@@ -389,6 +423,7 @@ void vm_execute(VM *vm, const uint8_t *bytecode, size_t code_size) {
                 memcpy(&vm->regs[r_dest], heap_resolve(vm, addr, sizeof(uint64_t)), sizeof(uint64_t));
                 break;
             }
+
             case OP_STORE_ELEM: {
                 uint8_t r_arr = bytecode[vm->ip++];
                 uint8_t r_idx = bytecode[vm->ip++];
@@ -400,6 +435,7 @@ void vm_execute(VM *vm, const uint8_t *bytecode, size_t code_size) {
                 memcpy(heap_resolve(vm, addr, sizeof(uint64_t)), &vm->regs[r_val], sizeof(uint64_t));
                 break;
             }
+
             case OP_LOAD_LOCAL: {
                 uint8_t reg = bytecode[vm->ip++];
                 uint16_t slot = *(uint16_t*)&bytecode[vm->ip];
@@ -407,6 +443,7 @@ void vm_execute(VM *vm, const uint8_t *bytecode, size_t code_size) {
                 vm->regs[reg] = vm->local_slots[slot];
                 break;
             }
+
             case OP_STORE_LOCAL: {
                 uint16_t slot = *(uint16_t*)&bytecode[vm->ip];
                 vm->ip += 2;
@@ -414,6 +451,7 @@ void vm_execute(VM *vm, const uint8_t *bytecode, size_t code_size) {
                 vm->local_slots[slot] = vm->regs[reg];
                 break;
             }
+
             case OP_ADDR_LOCAL: {
                 uint8_t reg = bytecode[vm->ip++];
                 uint16_t slot = *(uint16_t*)&bytecode[vm->ip];
@@ -422,6 +460,7 @@ void vm_execute(VM *vm, const uint8_t *bytecode, size_t code_size) {
                 vm->regs[reg] = (uint64_t)&vm->local_slots[slot];
                 break;
             }
+
             case OP_CAST: {
                 uint8_t r_dest = bytecode[vm->ip++];
                 uint8_t r_src = bytecode[vm->ip++];
@@ -432,11 +471,13 @@ void vm_execute(VM *vm, const uint8_t *bytecode, size_t code_size) {
                 vm->regs[r_dest] = vm->regs[r_src];
                 break;
             }
+
             case OP_PRINT: {
                 uint8_t reg = bytecode[vm->ip++];
                 printf("[VM PRINT] r%d = %llu (0x%llX)\n", reg, (unsigned long long)vm->regs[reg], (unsigned long long)vm->regs[reg]);
                 break;
             }
+
             case OP_TRAP: {
                 uint8_t imm = bytecode[vm->ip++];
                 printf("[VM TRAP] Triggered code: %d\n", imm);

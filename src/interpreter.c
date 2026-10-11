@@ -132,7 +132,8 @@ static void trace_statement(Runtime *rt, Frame *current, ASTNode *node) {
         step->object_count = rt->object_count < ORION_TRACE_MAX_OBJECTS ? rt->object_count : ORION_TRACE_MAX_OBJECTS;
     step->objects = step->object_count ? calloc(step->object_count, sizeof(*step->objects)) : NULL;
     if (step->object_count && !step->objects) { perror("calloc trace objects"); exit(1); }
-    for (size_t i = 0; i < step->object_count; ++i) {
+
+	for (size_t i = 0; i < step->object_count; ++i) {
         HeapObject *object = &rt->objects[i];
         OrionTraceObject *out = &step->objects[i];
         snprintf(out->type, sizeof(out->type), "%s", object->type);
@@ -145,7 +146,8 @@ static void trace_statement(Runtime *rt, Frame *current, ASTNode *node) {
             out->has_more = object->element_count > out->field_count;
             out->fields = out->field_count ? calloc(out->field_count, sizeof(*out->fields)) : NULL;
             if (out->field_count && !out->fields) { perror("calloc trace array fields"); exit(1); }
-            for (size_t j = 0; j < out->field_count; ++j) {
+
+			for (size_t j = 0; j < out->field_count; ++j) {
                 OrionTraceField *dest = &out->fields[j];
                 snprintf(dest->name, sizeof(dest->name), "[%zu]", j);
                 const char *element_type = !strncmp(object->type, "float", 5) ? "float" :
@@ -168,7 +170,8 @@ static void trace_statement(Runtime *rt, Frame *current, ASTNode *node) {
             out->fields = out->field_count ? calloc(out->field_count, sizeof(*out->fields)) : NULL;
             if (out->field_count && !out->fields) { perror("calloc trace struct fields"); exit(1); }
             size_t field_index = 0;
-            for (ASTNode *field = object->definition ? object->definition->left : NULL;
+
+			for (ASTNode *field = object->definition ? object->definition->left : NULL;
                  field && field_index < out->field_count; field = field->next, ++field_index) {
                 OrionTraceField *dest = &out->fields[field_index];
                 snprintf(dest->name, sizeof(dest->name), "%s", field->opToken.lexeme);
@@ -186,6 +189,7 @@ static void trace_statement(Runtime *rt, Frame *current, ASTNode *node) {
             }
         }
     }
+
     for (size_t i = 0; i < step->object_count; ++i) {
         OrionTraceObject *object = &step->objects[i];
         for (size_t f = 0; f < object->field_count; ++f) {
@@ -390,6 +394,7 @@ static int expression_truth(Runtime *rt, Frame *f, ASTNode *n, uint64_t bits) {
 static uint64_t eval(Runtime *rt, Frame *f, ASTNode *n) {
     if (!n) return 0;
     step(rt, n->opToken);
+
     switch (n->type) {
         case AST_LITERAL:
             if (n->opToken.type == TOKEN_NULL) return 0;
@@ -397,13 +402,15 @@ static uint64_t eval(Runtime *rt, Frame *f, ASTNode *n) {
             if (n->opToken.type == TOKEN_CHR_LIT) return (unsigned char)n->opToken.lexeme[1];
             if (n->opToken.type == TOKEN_FLT_LIT) return float_to_bits(strtod(n->opToken.lexeme, NULL));
             return (uint64_t)strtoll(n->opToken.lexeme, NULL, 0);
-        case AST_IDENT: {
+
+		case AST_IDENT: {
             Variable *v = find_var(f, n->opToken.lexeme);
             if (!v) runtime_error("unknown variable", n->opToken.line);
             trace_variable_read(rt, v);
             return v->value;
         }
-        case AST_ALLOC: {
+
+		case AST_ALLOC: {
             ASTNode *s = find_struct(rt, n->opToken.lexeme);
             if (!s && n->opToken.type == TOKEN_IDENT && !n->left) runtime_error("unknown struct type", n->opToken.line);
             if (s && n->left) runtime_error("arrays of structs are not supported yet", n->opToken.line);
@@ -425,21 +432,24 @@ static uint64_t eval(Runtime *rt, Frame *f, ASTNode *n) {
             }
             return address;
         }
-        case AST_INDEX_ACCESS: {
+ 
+		case AST_INDEX_ACCESS: {
             uint64_t base = eval(rt, f, n->left), index = eval(rt, f, n->right);
             if (index > (UINT64_MAX - base) / sizeof(uint64_t)) runtime_error("array index overflow", n->opToken.line);
             char index_name[24]; snprintf(index_name, sizeof(index_name), "%" PRIu64, index);
             trace_field_read(rt, base, index_name);
             return heap_load_u64(&rt->vm, base + index * sizeof(uint64_t));
         }
-        case AST_UNARY: {
+ 
+		case AST_UNARY: {
             uint64_t v = eval(rt, f, n->left);
             if (n->opToken.type == TOKEN_MINUS)
                 return expression_is_float(rt, f, n->left) ? float_to_bits(-bits_to_float(v)) : (uint64_t)(-((int64_t)v));
             if (n->opToken.type == TOKEN_NOT) return !expression_truth(rt, f, n->left, v);
             return v;
         }
-        case AST_BINARY: {
+ 
+		case AST_BINARY: {
             uint64_t a = eval(rt, f, n->left);
             if (n->opToken.type == TOKEN_AND && !expression_truth(rt, f, n->left, a)) return 0;
             if (n->opToken.type == TOKEN_OR && expression_truth(rt, f, n->left, a)) return 1;
@@ -487,7 +497,8 @@ static uint64_t eval(Runtime *rt, Frame *f, ASTNode *n) {
                 default: runtime_error("unsupported operator", n->opToken.line);
             }
         }
-        case AST_CALL: {
+ 
+		case AST_CALL: {
             if (!strcmp(n->opToken.lexeme, "print")) {
                 for (ASTNode *arg = n->left; arg; arg = arg->next) {
                     if (arg->type == AST_LITERAL && arg->opToken.type == TOKEN_STR_LIT) print_string(arg->opToken.lexeme);
@@ -524,7 +535,8 @@ static uint64_t eval(Runtime *rt, Frame *f, ASTNode *n) {
             rt->has_current_trace = had_caller_step;
             return result.value;
         }
-        case AST_FIELD_ACCESS: {
+ 
+		case AST_FIELD_ACCESS: {
             int offset = field_offset(rt, n->opToken.lexeme);
             if (offset == -2) runtime_error("field name is ambiguous across struct layouts", n->opToken.line);
             if (offset == -1) runtime_error("unknown struct field", n->opToken.line);
@@ -532,7 +544,8 @@ static uint64_t eval(Runtime *rt, Frame *f, ASTNode *n) {
             trace_field_read(rt, base, n->opToken.lexeme);
             return heap_load_u64(&rt->vm, base + (uint64_t)offset);
         }
-        default: runtime_error("expression expected", n->opToken.line);
+ 
+		default: runtime_error("expression expected", n->opToken.line);
     }
     return 0;
 }
@@ -566,6 +579,7 @@ static void assign(Runtime *rt, Frame *f, ASTNode *target, ASTNode *value, int d
         heap_store_u64(&rt->vm, base + (uint64_t)offset, v);
     } else runtime_error("assignment target must be a variable, array element, or struct field", target->opToken.line);
 }
+
 static Result execute_list(Runtime *rt, Frame *f, ASTNode *n) {
     for (; n; n = n->next) {
         step(rt, n->opToken);
@@ -608,10 +622,12 @@ static Result execute_list(Runtime *rt, Frame *f, ASTNode *n) {
     }
     return (Result){0, 0, 0};
 }
+
 static int run_program_internal(ASTNode *program, OrionTrace *trace) {
     next_slot_address = 0x100000;
     Runtime rt = {0}; vm_init(&rt.vm); rt.functions = program->extra; rt.structs = program->right; rt.trace = trace;
     ASTNode *main_fn = rt.functions;
+
     while (main_fn && strcmp(main_fn->opToken.lexeme, "main")) main_fn = main_fn->next;
     Frame global = {0};
     if (main_fn) {
