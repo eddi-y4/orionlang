@@ -1,0 +1,82 @@
+// Merge two binary search trees by inserting tree B into tree A.
+struct Node {
+    int value;
+    Node* left;
+    Node* right;
+}
+
+fn insert(Node* root, int value) -> Node* {
+    if (root == null) {
+        Node* node = alloc Node;
+        node.value = value;
+        node.left = null;
+        node.right = null;
+        return node;
+    }
+
+    if (value < root.value) {
+        root.left = insert(root.left, value);
+    } else {
+        if (value > root.value) {
+            root.right = insert(root.right, value);
+        }
+    }
+
+    return root;
+}
+
+fn merge(Node* a, Node* b) -> Node* {
+    if (b == null) {
+        return a;
+    }
+
+    a = merge(a, b.left);
+    a = insert(a, b.value);
+    a = merge(a, b.right);
+
+    return a;
+}
+
+fn printInOrder(Node* root) -> int {
+    if (root == null) {
+        return 0;
+    }
+
+    printInOrder(root.left);
+    print(root.value);
+    printInOrder(root.right);
+    return 0;
+}
+
+fn freeTree(Node* root) -> int {
+    if (root == null) {
+        return 0;
+    }
+
+    freeTree(root.left);
+    freeTree(root.right);
+    free(root);
+    return 0;
+}
+
+fn main() -> int {
+    Node* a = null;
+    Node* b = null;
+
+    a = insert(a, 4);
+    a = insert(a, 2);
+    a = insert(a, 6);
+
+    b = insert(b, 5);
+    b = insert(b, 1);
+    b = insert(b, 7);
+
+    a = merge(a, b);
+
+    // Expected sorted output: 1, 2, 4, 5, 6, 7
+    printInOrder(a);
+
+    freeTree(a);
+    freeTree(b);
+    return 0;
+}

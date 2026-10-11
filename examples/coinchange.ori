@@ -1,0 +1,49 @@
+// Coin Change: minimum coins needed to make an amount.
+// Returns -1 if the amount cannot be made.
+fn coinChange(int* coins, int count, int amount) -> int {
+    int* dp = alloc int[amount + 1];
+
+    int i = 0;
+    while (i <= amount) {
+        dp[i] = amount + 1;
+        i = i + 1;
+    }
+    dp[0] = 0;
+
+    int a = 1;
+    while (a <= amount) {
+        int c = 0;
+
+        while (c < count) {
+            int coin = coins[c];
+
+            if (coin <= a && dp[a - coin] + 1 < dp[a]) {
+                dp[a] = dp[a - coin] + 1;
+            }
+
+            c = c + 1;
+        }
+
+        a = a + 1;
+    }
+
+    int result = -1;
+    if (dp[amount] <= amount) {
+        result = dp[amount];
+    }
+
+    return result;
+}
+
+fn main() -> int {
+    int* coins = alloc int[3];
+    coins[0] = 1;
+    coins[1] = 2;
+    coins[2] = 5;
+
+    print(coinChange(coins, 3, 11)); // 3: 5 + 5 + 1
+    print(coinChange(coins, 3, 3));  // 2: 2 + 1
+
+    free(coins);
+    return 0;
+}

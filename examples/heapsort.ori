@@ -1,0 +1,68 @@
+// Heap sort: build a max heap, then extract its maximum.
+fn siftDown(int* a, int root, int size) -> int {
+    while (root * 2 + 1 < size) {
+        int child = root * 2 + 1;
+        int right = child + 1;
+
+        if (right < size && a[right] > a[child]) {
+            child = right;
+        }
+
+        if (a[root] >= a[child]) {
+            return 0;
+        }
+
+        int temp = a[root];
+        a[root] = a[child];
+        a[child] = temp;
+
+        root = child;
+    }
+
+    return 0;
+}
+
+fn heapSort(int* a, int n) -> int {
+    int i = n / 2;
+
+    // Build the max heap.
+    while (i > 0) {
+        i = i - 1;
+        siftDown(a, i, n);
+    }
+
+    // Move each maximum to the sorted suffix.
+    i = n - 1;
+    while (i > 0) {
+        int temp = a[0];
+        a[0] = a[i];
+        a[i] = temp;
+
+        siftDown(a, 0, i);
+        i = i - 1;
+    }
+
+    return 0;
+}
+
+fn main() -> int {
+    int* a = alloc int[7];
+    a[0] = 4;
+    a[1] = 10;
+    a[2] = 3;
+    a[3] = 5;
+    a[4] = 1;
+    a[5] = 8;
+    a[6] = 2;
+
+    heapSort(a, 7);
+
+    int i = 0;
+    while (i < 7) {
+        print(a[i]);
+        i = i + 1;
+    }
+
+    free(a);
+    return 0;
+}

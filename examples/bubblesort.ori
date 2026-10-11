@@ -1,0 +1,48 @@
+// Bubble sort: repeatedly swap adjacent out-of-order elements.
+fn bubbleSort(int* a, int n) -> int {
+    int i = 0;
+
+    while (i < n - 1) {
+        int swapped = 0;
+        int j = 0;
+
+        while (j < n - i - 1) {
+            if (a[j] > a[j + 1]) {
+                int temp = a[j];
+                a[j] = a[j + 1];
+                a[j + 1] = temp;
+                swapped = 1;
+            }
+            j = j + 1;
+        }
+
+        if (swapped == 0) {
+            return 0;
+        }
+
+        i = i + 1;
+    }
+
+    return 0;
+}
+
+fn main() -> int {
+    int* a = alloc int[7];
+    a[0] = 4;
+    a[1] = 10;
+    a[2] = 3;
+    a[3] = 5;
+    a[4] = 1;
+    a[5] = 8;
+    a[6] = 2;
+    bubbleSort(a, 7);
+
+    int i = 0;
+    while (i < 7) {
+        print(a[i]);
+        i = i + 1;
+    }
+
+    free(a);
+    return 0;
+}

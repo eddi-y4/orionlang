@@ -1,0 +1,50 @@
+// Selection sort: sort an array in place.
+fn selectionSort(int* values, int length) -> int {
+    int i = 0;
+
+    while (i < length - 1) {
+        int min = i;
+        int j = i + 1;
+
+        while (j < length) {
+            if (values[j] < values[min]) {
+                min = j;
+            }
+            j = j + 1;
+        }
+
+        if (min != i) {
+            int temp = values[i];
+            values[i] = values[min];
+            values[min] = temp;
+        }
+
+        i = i + 1;
+    }
+
+    return 0;
+}
+
+fn main() -> int {
+    int* values = alloc int[9];
+    values[0] = 64;
+    values[1] = 25;
+    values[2] = 12;
+    values[3] = 22;
+    values[4] = 11;
+    values[5] = 90;
+    values[6] = -7;
+    values[7] = 18;
+    values[8] = 66;
+
+    selectionSort(values, 9);
+
+    int i = 0;
+    while (i < 6) {
+        print(values[i]);
+        i = i + 1;
+    }
+
+    free(values);
+    return 0;
+}

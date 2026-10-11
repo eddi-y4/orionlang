@@ -1685,6 +1685,7 @@ int main(int argc, char **argv) {
             bytecode_animation_progress = fminf(1.0f, bytecode_animation_progress + frame_time * 4.0f);
             if (bytecode_animation_progress >= 1.0f) bytecode_animation_direction = 0;
         }
+
         if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) && panning) {
             flow_following = 0;
             memory_following = 0;
@@ -1693,6 +1694,7 @@ int main(int argc, char **argv) {
             flow_pan.y += mouse_now.y - drag_origin.y;
             drag_origin = mouse_now;
         }
+
         if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) { panning = 0; flow_drag_node = NULL; memory_box_dragging = 0; memory_dragging_frame = 0; }
         if (IsMouseButtonDown(MOUSE_BUTTON_LEFT) && memory_panning && !memory_box_dragging) {
             memory_following=0;
